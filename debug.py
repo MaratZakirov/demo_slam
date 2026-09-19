@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 
 def plot_matches(frame_a, frame_b, points_2d_a, points_2d_b, max_lines=30):
@@ -96,3 +98,83 @@ def save_ply_fast_numpy(filename, points, colors):
     )
 
 
+def visualize_scene_matplotlib(pts_a, pts_b, K, R, t):
+    """
+    Интерактивная 3D визуализация 35 точек и реальной геометрии двух камер в Matplotlib.
+    """
+    # --- 1. Триангуляция точек на чистом NumPy (DLT метод) ---
+    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+    P2 = K @ np.hstack((R, t.reshape(3, 1)))
+
+    cloud_3d = []
+    for i in range(len(pts_a)):
+        u1, v1 = pts_a[i]
+        u2, v2 = pts_b[i]
+        A = np.zeros((4, 4))
+        A[0] = u1 * P1[2, :] - P1[0, :]
+        A[1] = v1 * P1[2, :] - P1[1, :]
+        A[2] = u2 * P2[2, :] - P2[0, :]
+        A[3] = v2 * P2[2, :] - P2[1, :]
+        _, _, Vt = np.linalg.svd(A)
+        X = Vt[-1]
+        X_3d = X[:3] / X[3]
+        cloud_3d.append(X_3d)
+    cloud_3d = np.array(cloud_3d)
+
+    # --- 2. Функция генерации реального каркаса камеры ---
+    def get_camera_mesh(R_cam, t_cam, K_matrix, scale=0.001):
+        # scale преобразует пиксельные размеры K в удобный масштаб для графика
+        fx = K_matrix[0, 0] * scale
+        cx = K_matrix[0, 2] * scale
+        cy = K_matrix[1, 2] * scale
+
+        # 5 базовых точек пирамиды в локальных координатах
+        local_pts = np.array([
+            [0, 0, 0],  # Оптический центр (вершина)
+            [-cx, -cy, fx],  # Левый-верхний угол матрицы
+            [cx, -cy, fx],  # Правый-верхний угол
+            [cx, cy, fx],  # Правый-нижний угол
+            [-cx, cy, fx]  # Левый-нижний угол
+        ])
+
+        # Переводим в мировую систему координат первой камеры
+        # X_world = R.T @ (X_local - t)
+        t_vec = t_cam.reshape(1, 3)
+        world_pts = (local_pts - t_vec) @ R_cam
+        return world_pts
+
+    # Генерируем вершины для обеих камер
+    cam1_nodes = get_camera_mesh(np.eye(3), np.zeros((3, 1)), K)
+    cam2_nodes = get_camera_mesh(R, t, K)
+
+    # Индексы линий, формирующих каркас пирамиды
+    cam_lines = [[0, 1], [0, 2], [0, 3], [0, 4], [1, 2], [2, 3], [3, 4], [4, 1]]
+
+    # --- 3. Строим интерактивный 3D график Matplotlib ---
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Рисуем 35 триангулированных 3D-точек (синие сферы)
+    ax.scatter(cloud_3d[:, 0], cloud_3d[:, 1], cloud_3d[:, 2], c='blue', s=30, label='3D Points (Inliers)')
+
+    # Отрисовка Первой Камеры (Зеленая пирамида)
+    for line in cam_lines:
+        p1, p2 = cam1_nodes[line[0]], cam1_nodes[line[1]]
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='green', linewidth=2)
+    ax.scatter(cam1_nodes[0, 0], cam1_nodes[0, 1], cam1_nodes[0, 2], c='green', s=100, label='Camera 1 (Start)')
+
+    # Отрисовка Второй Камеры (Красная пирамида)
+    for line in cam_lines:
+        p1, p2 = cam2_nodes[line[0]], cam2_nodes[line[1]]
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='red', linewidth=2)
+    ax.scatter(cam2_nodes[0, 0], cam2_nodes[0, 1], cam2_nodes[0, 2], c='red', s=100, label='Camera 2 (Moved)')
+
+    # Настройка осей координат по стандарту OpenCV (ось Y вниз, Z вперед)
+    ax.set_xlabel('X (Right)')
+    ax.set_ylabel('Y (Down)')
+    ax.set_zlabel('Z (Depth)')
+    ax.invert_yaxis()  # Переворачиваем Y, чтобы графический верх был верхом в реальности
+
+    ax.legend()
+    plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
+    plt.show()

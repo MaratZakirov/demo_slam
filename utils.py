@@ -226,10 +226,6 @@ def triangulate_points_numpy(pts_a, pts_b, K, R, t):
     return np.array(points_3d)
 
 
-import numpy as np
-import cv2
-
-
 def compute_disparity_numpy(rect_a, rect_b, window_size=7, max_disp=64):
     """
     Расчет карты диспаратности на чистом NumPy методом SAD.
@@ -280,3 +276,118 @@ def compute_disparity_numpy(rect_a, rect_b, window_size=7, max_disp=64):
     return disparity_map
 
 
+def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=5, max_disp=64):
+    """
+    Расчет ПЛАВНОЙ карты диспаратности на чистом NumPy с субпиксельной интерполяцией.
+    """
+    gray_a = cv2.cvtColor(rect_a, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gray_b = cv2.cvtColor(rect_b, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    h, w = gray_a.shape
+    half_w = window_size // 2
+
+    # Создаем 3D-куб NumPy размера (max_disp, H, W), чтобы сохранить значения ошибок для каждого сдвига
+    # Это необходимо для последующего поиска соседей (d-1) и (d+1)
+    sad_cube = np.full((max_disp, h, w), np.inf, dtype=np.float32)
+
+    min_sad = np.full((h, w), np.inf, dtype=np.float32)
+    disparity_map_int = np.zeros((h, w), dtype=np.int32)
+
+    kernel = np.ones((window_size, window_size), dtype=np.float32)
+
+    # 1. Сбор данных (тот же цикл, но сохраняем историю SAD)
+    for d in range(max_disp):
+        if d >= w:
+            break
+
+        shifted_b = np.zeros_like(gray_b)
+        shifted_b[:, :w - d] = gray_b[:, d:]
+
+        abs_diff = np.abs(gray_a - shifted_b)
+        sad = cv2.filter2D(abs_diff, -1, kernel, borderType=cv2.BORDER_CONSTANT)
+
+        # Небольшое пространственное сглаживание самой стоимости (убирает прыжки пикселей)
+        sad = cv2.GaussianBlur(sad, (3, 3), 0)
+
+        valid_zone = np.zeros((h, w), dtype=bool)
+        valid_zone[:, d + half_w: w - half_w] = True
+
+        sad_cube[d] = np.where(valid_zone, sad, np.inf)
+
+        better_match = (sad < min_sad) & valid_zone
+        min_sad[better_match] = sad[better_match]
+        disparity_map_int[better_match] = d
+
+    # 2. МАГИЯ NUMPY: Векторная субпиксельная интерполяция параболой
+    # Создаем итоговую float32 карту
+    disparity_map_smooth = disparity_map_int.astype(np.float32)
+
+    # Нам нужны только те пиксели, у которых лучший сдвиг лежит внутри диапазона (есть соседи слева и справа)
+    # Иначе мы не сможем построить параболу
+    subpixel_mask = (disparity_map_int > 0) & (disparity_map_int < max_disp - 1)
+
+    if np.any(subpixel_mask):
+        # Вытаскиваем координаты пикселей, проходящих по маске
+        y_indices, x_indices = np.where(subpixel_mask)
+        d_best = disparity_map_int[subpixel_mask]
+
+        # Получаем значения ошибок SAD для лучшего сдвига, а также для его левого и правого соседей
+        # Используем продвинутую индексацию NumPy для мгновенной выборки из 3D-куба
+        sad_center = sad_cube[d_best, y_indices, x_indices]
+        sad_minus = sad_cube[d_best - 1, y_indices, x_indices]
+        sad_plus = sad_cube[d_best + 1, y_indices, x_indices]
+
+        # Математическая формула вершины параболы (коэффициент субпиксельного сдвига)
+        # Знаменатель защищаем от деления на ноль микро-числом 1e-5
+        denominator = 2.0 * (sad_minus + sad_plus - 2.0 * sad_center)
+        subpixel_delta = (sad_minus - sad_plus) / (denominator + 1e-5)
+
+        # Ограничиваем поправку диапазоном [-0.5, 0.5], чтобы математика не улетала из-за шума
+        subpixel_delta = np.clip(subpixel_delta, -0.5, 0.5)
+
+        # Записываем дробную поправку обратно в карту диспаратности
+        disparity_map_smooth[subpixel_mask] += subpixel_delta
+
+    # ФИНАЛЬНОЕ СГЛАЖИВАНИЕ ВОЛН:
+    # Фильтр Гаусса размера 3х3 или 5x5 с микро-радиусом размоет циклическую рябь параболы,
+    # превратив волны в идеально ровную, скользящую поверхность.
+    disparity_map_final = cv2.GaussianBlur(disparity_map_smooth, (5, 5), 0.5)
+
+    return disparity_map_final
+
+
+def compute_disparity_opencv(rect_a, rect_b, window_size=3, max_disp=64):
+    """
+    Замена алгоритма SAD на встроенный в OpenCV алгоритм StereoSGBM.
+    Принимает ректифицированные цветные кадры, возвращает карту диспаратности float32.
+    """
+    # 1. Переводим кадры в градации серого (обязательно для SGBM)
+    gray_a = cv2.cvtColor(rect_a, cv2.COLOR_BGR2GRAY)
+    gray_b = cv2.cvtColor(rect_b, cv2.COLOR_BGR2GRAY)
+
+    # 2. Настраиваем и инициализируем алгоритм SGBM
+    # Параметр numDisparities ОБЯЗАН быть строго кратен 16
+    num_disp = int(np.ceil(max_disp / 16.0) * 16)
+
+    stereo = cv2.StereoSGBM_create(
+        minDisparity=-16,
+        numDisparities=num_disp,
+        blockSize=window_size,
+        # P1 и P2 — штрафы за резкое изменение глубины.
+        # Они удерживают плоскости (стены, пол) ровными и не дают им шуметь.
+        P1=8 * 3 * window_size ** 2,
+        P2=32 * 3 * window_size ** 2,
+        disp12MaxDiff=-1,
+        uniquenessRatio=5,  # Жесткий фильтр уникальности (аналог теста Лоу)
+        speckleWindowSize=0,
+        speckleRange=2
+    )
+
+    # 3. Вычисляем диспаратность
+    # По умолчанию OpenCV возвращает значения, умноженные на 16 (формат fixed-point)
+    disp_fixed = stereo.compute(gray_a, gray_b)
+
+    # 4. Переводим в честный float32 и делим на 16.0 для возврата к нормальным пикселям
+    disp_float = disp_fixed.astype(np.float32) / 16.0
+
+    return disp_float

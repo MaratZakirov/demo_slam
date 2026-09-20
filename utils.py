@@ -42,69 +42,6 @@ def load_frames(video_path: str, quiet=True) -> list:
 
     return frames
 
-
-def extract_sift_features(frame, max_features=1000):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    # 2. Инициализируем и запускаем SIFT
-    sift = cv2.SIFT_create(nfeatures=max_features)
-    keypoints, descriptors = sift.detectAndCompute(gray, None)
-
-    # Если точек не найдено, возвращаем пустые массивы нужной формы
-    if keypoints is None or len(keypoints) == 0:
-        return np.empty((0, 2), dtype=np.float32), np.empty((0, 128), dtype=np.float32)
-
-    # 3. Вытаскиваем координаты (u, v) из объектов OpenCV в чистый массив NumPy
-    points_2d = np.array([kp.pt for kp in keypoints], dtype=np.float32)
-
-    return points_2d, descriptors
-
-
-def match_features_numpy(desc_a, desc_b, ratio_threshold=0.75):
-    """
-    Находит индексы совпадающих точек между двумя кадрами на чистом NumPy.
-    """
-    if desc_a.shape[0] == 0 or desc_b.shape[0] == 0:
-        return np.empty((0,), dtype=np.int32), np.empty((0,), dtype=np.int32)
-
-    # 1. Считаем матрицу квадратов Евклидовых расстояний между всеми парами векторов
-    # Формула: (a - b)^2 = a^2 + b^2 - 2ab
-    a2 = np.sum(desc_a**2, axis=1, keepdims=True)  # (N, 1)
-    b2 = np.sum(desc_b**2, axis=1)                 # (M,)
-    ab = np.dot(desc_a, desc_b.T)                  # (N, M)
-    dists = np.sqrt(np.maximum(a2 + b2 - 2 * ab, 0)) # Матрица расстояний (N, M)
-
-    # 2. Для каждой точки из А находим два ближайших соседа из B
-    idx_sorted = np.argsort(dists, axis=1)
-    idx_closest1 = idx_sorted[:, 0]  # Индекс лучшего соседа
-    idx_closest2 = idx_sorted[:, 1]  # Индекс второго по близости соседа
-
-    # Получаем сами расстояния до них
-    d1 = dists[np.arange(len(dists)), idx_closest1]
-    d2 = dists[np.arange(len(dists)), idx_closest2]
-
-    # 3. Тест Лоу: первый сосед должен быть значительно ближе второго
-    mask = d1 < ratio_threshold * d2
-
-    # Итоговые индексы совпадений
-    matches_idx_a = np.where(mask)[0]
-    matches_idx_b = idx_closest1[mask]
-
-    return matches_idx_a, matches_idx_b
-
-
-def get_matches_using_sift(frame_a, frame_b):
-    points_2d_a, descriptors_a = extract_sift_features(frame_a)
-    points_2d_b, descriptors_b = extract_sift_features(frame_b)
-
-    idx_a, idx_b = match_features_numpy(points_2d_a, points_2d_b)
-
-    matched_pts_a = points_2d_a[idx_a]  # Массив (K, 2)
-    matched_pts_b = points_2d_b[idx_b]  # Массив (K, 2)
-
-    return matched_pts_a, matched_pts_b
-
-
 def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
     """
     Находит сопоставленные точки между двумя кадрами с использованием
@@ -155,7 +92,6 @@ def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
 
     return matched_pts_a, matched_pts_b
 
-
 def get_matrix_K_from_frame(frame):
     height, width = frame.shape[:2]
 
@@ -173,9 +109,6 @@ def get_matrix_K_from_frame(frame):
     ], dtype=np.float32)
 
     return K
-
-
-import numpy as np
 
 
 def triangulate_points_numpy(pts_a, pts_b, K, R, t):
@@ -224,57 +157,6 @@ def triangulate_points_numpy(pts_a, pts_b, K, R, t):
         points_3d.append(X_3d)
 
     return np.array(points_3d)
-
-
-def compute_disparity_numpy(rect_a, rect_b, window_size=7, max_disp=64):
-    """
-    Расчет карты диспаратности на чистом NumPy методом SAD.
-    """
-    # 1. Переводим в gray float32 для точности математических операций
-    gray_a = cv2.cvtColor(rect_a, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_b = cv2.cvtColor(rect_b, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
-    h, w = gray_a.shape
-    half_w = window_size // 2
-
-    # Сюда будем складывать минимальную стоимость (ошибку) для каждого пикселя
-    min_sad = np.full((h, w), np.inf, dtype=np.float32)
-    # Сюда запишем итоговый сдвиг (диспаратность)
-    disparity_map = np.zeros((h, w), dtype=np.float32)
-
-    # Интегральное окно (фильтр размытия) заменяет нам циклы по пикселям окна
-    kernel = np.ones((window_size, window_size), dtype=np.float32)
-
-    # Основной цикл по всем возможным сдвигам (поиск по эпиполярной линии)
-    for d in range(max_disp):
-        if d >= w:
-            break
-
-        # Сдвигаем правый кадр влево на 'd' пикселей с помощью NumPy
-        # Заполняем освободившиеся пиксели справа нулями
-        shifted_b = np.zeros_like(gray_b)
-        shifted_b[:, :w - d] = gray_b[:, d:]
-
-        # Считаем абсолютную разность между левым кадром и сдвинутым правым
-        abs_diff = np.abs(gray_a - shifted_b)
-
-        # Суммируем разности в пределах окна размера window_size
-        # cv2.filter2D здесь используется как супер-быстрая замена np.convolve2d
-        sad = cv2.filter2D(abs_diff, -1, kernel, borderType=cv2.BORDER_CONSTANT)
-
-        # Маска: где текущая ошибка меньше, чем сохраненная ранее
-        # Важно искать только там, где пиксель физически существует (w > d)
-        valid_zone = np.zeros((h, w), dtype=bool)
-        valid_zone[:, d + half_w:w - half_w] = True
-
-        better_match = (sad < min_sad) & valid_zone
-
-        # Обновляем минимальную ошибку и запоминаем этот сдвиг 'd'
-        min_sad[better_match] = sad[better_match]
-        disparity_map[better_match] = d
-
-    return disparity_map
-
 
 def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=5, max_disp=64):
     """
@@ -355,39 +237,40 @@ def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=5, max_disp=64)
 
     return disparity_map_final
 
+def apply_roi(rect_a, rect_b, roi_a, roi_b):
+    x1, y1, w1, h1 = roi_a
+    x2, y2, w2, h2 = roi_b
 
-def compute_disparity_opencv(rect_a, rect_b, window_size=3, max_disp=64):
-    """
-    Замена алгоритма SAD на встроенный в OpenCV алгоритм StereoSGBM.
-    Принимает ректифицированные цветные кадры, возвращает карту диспаратности float32.
-    """
-    # 1. Переводим кадры в градации серого (обязательно для SGBM)
-    gray_a = cv2.cvtColor(rect_a, cv2.COLOR_BGR2GRAY)
-    gray_b = cv2.cvtColor(rect_b, cv2.COLOR_BGR2GRAY)
+    x = max(x1, x2)
+    y = max(y1, y2)
+    w = min(x1 + w1, x2 + w2) - x
+    h = min(y1 + h1, y2 + h2) - y
 
-    # 2. Настраиваем и инициализируем алгоритм SGBM
-    # Параметр numDisparities ОБЯЗАН быть строго кратен 16
-    num_disp = int(np.ceil(max_disp / 16.0) * 16)
+    rect_a = rect_a[y:y + h, x:x + w]
+    rect_b = rect_b[y:y + h, x:x + w]
 
-    stereo = cv2.StereoSGBM_create(
-        minDisparity=-16,
-        numDisparities=num_disp,
-        blockSize=window_size,
-        # P1 и P2 — штрафы за резкое изменение глубины.
-        # Они удерживают плоскости (стены, пол) ровными и не дают им шуметь.
-        P1=8 * 3 * window_size ** 2,
-        P2=32 * 3 * window_size ** 2,
-        disp12MaxDiff=-1,
-        uniquenessRatio=5,  # Жесткий фильтр уникальности (аналог теста Лоу)
-        speckleWindowSize=0,
-        speckleRange=2
+    return rect_a, rect_b
+
+def calculate_disparity_of(rectified_frame_a, rectified_frame_b):
+    gray_a = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
+    gray_b = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
+    H, W = gray_a.shape[:2]
+
+    flow_init = np.zeros((H, W, 2), dtype=np.float32)
+    #flow_init[..., 0] = 0  # начальная диспаратность, если есть оценка
+    flow_init[..., 1] = 0  # вертикальная компонента строго 0
+
+    flow = cv2.calcOpticalFlowFarneback(
+        prev=gray_a,  # первый кадр (левая камера), grayscale
+        next=gray_b,  # второй кадр (правая камера), grayscale
+        flow=None,  # обычно None, заполнится сам
+        pyr_scale=0.5,  # масштаб между уровнями пирамиды
+        levels=5,  # число уровней пирамиды
+        winsize=15,  # размер окна усреднения
+        iterations=10,  # итераций на уровне
+        poly_n=5,  # размер окрестности полинома
+        poly_sigma=1.2,  # сигма для сглаживания полинома
+        flags=0  # 0 или cv2.OPTFLOW_FARNEBACK_GAUSSIAN
     )
 
-    # 3. Вычисляем диспаратность
-    # По умолчанию OpenCV возвращает значения, умноженные на 16 (формат fixed-point)
-    disp_fixed = stereo.compute(gray_a, gray_b)
-
-    # 4. Переводим в честный float32 и делим на 16.0 для возврата к нормальным пикселям
-    disp_float = disp_fixed.astype(np.float32) / 16.0
-
-    return disp_float
+    return flow[..., 0]

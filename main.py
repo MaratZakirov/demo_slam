@@ -68,12 +68,14 @@ rectified_frame_a = cv2.remap(frames[0], map1_x, map1_y, cv2.INTER_LINEAR)
 # frame_b — это второй кадр, который мы брали для сопоставления (например, кадр 15)
 rectified_frame_b = cv2.remap(frames[1], map2_x, map2_y, cv2.INTER_LINEAR)
 
+# TODO does not change anything
+#rectified_frame_a, rectified_frame_b = apply_roi(rectified_frame_a, rectified_frame_b, roi1, roi2)
+
 cv2.imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
 
 # Считаем карту
-#disp = compute_disparity_numpy(rectified_frame_a, rectified_frame_b, window_size=7, max_disp=64)
-#disp = compute_disparity_opencv(rectified_frame_a, rectified_frame_b, window_size=7, max_disp=64)
-disp = compute_disparity_subpixel_numpy(rectified_frame_a, rectified_frame_b)
+#disp = compute_disparity_subpixel_numpy(rectified_frame_a, rectified_frame_b)
+disp = calculate_disparity_of(rectified_frame_a, rectified_frame_b)
 
 # Чтобы увидеть её глазами, нормализуем для вывода на экран (0-255)
 disp_visual = cv2.normalize(disp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)

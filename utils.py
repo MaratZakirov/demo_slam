@@ -56,7 +56,6 @@ def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
         matched_pts_a (np.ndarray): Координаты точек на первом кадре (K x 2)
         matched_pts_b (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
     """
-    # 1. Переводим оба кадра в черно-белый формат (обязательно для трекинга)
     gray_a = cv2.cvtColor(frame_a, cv2.COLOR_BGR2GRAY)
     gray_b = cv2.cvtColor(frame_b, cv2.COLOR_BGR2GRAY)
 
@@ -110,7 +109,6 @@ def get_matrix_K_from_frame(frame):
 
     return K
 
-
 def triangulate_points_numpy(pts_a, pts_b, K, R, t):
     """
     Триангуляция точек на чистом NumPy с использованием SVD.
@@ -158,7 +156,7 @@ def triangulate_points_numpy(pts_a, pts_b, K, R, t):
 
     return np.array(points_3d)
 
-def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=5, max_disp=64):
+def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=15, max_disp=80):
     """
     Расчет ПЛАВНОЙ карты диспаратности на чистом NumPy с субпиксельной интерполяцией.
     """
@@ -250,27 +248,3 @@ def apply_roi(rect_a, rect_b, roi_a, roi_b):
     rect_b = rect_b[y:y + h, x:x + w]
 
     return rect_a, rect_b
-
-def calculate_disparity_of(rectified_frame_a, rectified_frame_b):
-    gray_a = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
-    gray_b = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
-    H, W = gray_a.shape[:2]
-
-    flow_init = np.zeros((H, W, 2), dtype=np.float32)
-    #flow_init[..., 0] = 0  # начальная диспаратность, если есть оценка
-    flow_init[..., 1] = 0  # вертикальная компонента строго 0
-
-    flow = cv2.calcOpticalFlowFarneback(
-        prev=gray_a,  # первый кадр (левая камера), grayscale
-        next=gray_b,  # второй кадр (правая камера), grayscale
-        flow=None,  # обычно None, заполнится сам
-        pyr_scale=0.5,  # масштаб между уровнями пирамиды
-        levels=5,  # число уровней пирамиды
-        winsize=15,  # размер окна усреднения
-        iterations=10,  # итераций на уровне
-        poly_n=5,  # размер окрестности полинома
-        poly_sigma=1.2,  # сигма для сглаживания полинома
-        flags=0  # 0 или cv2.OPTFLOW_FARNEBACK_GAUSSIAN
-    )
-
-    return flow[..., 0]

@@ -261,3 +261,41 @@ def apply_roi(rect_a, rect_b, roi_a, roi_b):
     rect_b = rect_b[y:y + h, x:x + w]
 
     return rect_a, rect_b
+
+def compute_disparity_hitnet(rect_a, rect_b, height=720, width=1280):
+    import onnxruntime as ort
+
+    onnx_opts = ort.SessionOptions()
+    onnx_opts.intra_op_num_threads = 6
+    onnx_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+    onnx_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    onnx_session = ort.InferenceSession("models/model_float32.onnx", onnx_opts)
+    input_name = "input"
+
+    # TODO not ideal proportions are damaged
+    resized_a = cv2.resize(rect_a, (width, height), interpolation=cv2.INTER_AREA)
+    resized_b = cv2.resize(rect_b, (width, height), interpolation=cv2.INTER_AREA)
+
+    rgb_a = cv2.cvtColor(resized_a, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    rgb_b = cv2.cvtColor(resized_b, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+    # Склеиваем две матрицы (3, 480, 640) по оси 0, получаем (6, 480, 640)
+    outputs = onnx_session.run(None,
+        {input_name: np.concatenate((
+            np.transpose(rgb_a, (2, 0, 1)),
+            np.transpose(rgb_b, (2, 0, 1))), axis=0)[None]})
+
+    # Вытаскиваем результат и схлопываем лишние размерности до плоской матрицы (480, 640)
+    disp_float = np.squeeze(outputs[0])
+
+    orig_h, orig_w = rect_a.shape[:2]
+    disp_resized = cv2.resize(disp_float, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+
+    # Пропорциональный пересчет масштаба диспаратности под новую ширину экрана
+    scale_factor = orig_w / width
+    disp_resized = disp_resized * scale_factor
+
+    # Мягкая маска отсечки невалидных зон
+    disp_resized[disp_resized <= 0.1] = np.nan
+
+    return disp_resized

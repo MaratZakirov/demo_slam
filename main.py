@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
 def process_stere_pair(frame_a, frame_b):
-    disparity_alg = 'SAD'
+    disparity_alg = 'CNN'
 
     K = get_matrix_K_from_frame(frame_a)
 
@@ -98,6 +98,10 @@ def process_stere_pair(frame_a, frame_b):
             mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
         )
         disp = (stereo_sgbm.compute(imgR, imgL) / 16.0).astype(np.float32)
+    elif disparity_alg == 'CNN':
+        disp = compute_disparity_hitnet(rectified_frame_b, rectified_frame_a)
+    else:
+        assert False
 
     # Чтобы увидеть её глазами, нормализуем для вывода на экран (0-255)
     # Замена для визуализации

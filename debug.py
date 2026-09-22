@@ -3,6 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
+def imshow(label: str, image: np.ndarray, use_cv=False):
+    if use_cv:
+        cv2.imshow(label, image)
+        cv2.waitKey(0)
+    else:
+        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.title(label, fontsize=14, fontweight='bold')
+        plt.show()
 
 def plot_matches(frame_a, frame_b, points_2d_a, points_2d_b, max_lines=30):
     """
@@ -50,8 +58,7 @@ def plot_matches(frame_a, frame_b, points_2d_a, points_2d_b, max_lines=30):
         cv2.line(canvas, pt_a, pt_b, color, 1, cv2.LINE_AA)
 
     # 3. Показываем результат
-    cv2.imshow(f"Matches Debug (Showing {num_matches}/{len(points_2d_a)} lines)", canvas)
-    cv2.waitKey(0)  # Ждем нажатия любой клавиши, чтобы продолжить
+    imshow(f"Matches Debug (Showing {num_matches}/{len(points_2d_a)} lines)", canvas)
 
 def save_obj_fast_numpy(filename, points, colors):
     """

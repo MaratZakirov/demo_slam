@@ -61,14 +61,15 @@ rectified_frame_a = cv2.remap(frames[0], map1_x, map1_y, cv2.INTER_LINEAR)
 # frame_b — это второй кадр, который мы брали для сопоставления (например, кадр 15)
 rectified_frame_b = cv2.remap(frames[1], map2_x, map2_y, cv2.INTER_LINEAR)
 
-cv2.imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
+imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
 
 disp = compute_disparity_subpixel_numpy(rectified_frame_a, rectified_frame_b, max_disp=54)
 
 # Чтобы увидеть её глазами, нормализуем для вывода на экран (0-255)
+# Замена для визуализации
+disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
 disp_visual = cv2.normalize(disp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-cv2.imshow("Disparity Map", disp_visual)
-cv2.waitKey(0)
+imshow("Disparity Map", disp_visual)
 
 points_3d = cv2.reprojectImageTo3D(disp, Q)
 

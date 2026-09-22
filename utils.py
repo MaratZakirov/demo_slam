@@ -91,6 +91,19 @@ def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
 
     return matched_pts_a, matched_pts_b
 
+def decompose_2d_vector_field(xy: np.ndarray, uv: np.ndarray):
+    xy_centered = xy - np.mean(xy, axis=0)
+    uv_centered = uv - np.mean(uv, axis=0)
+    J_T, _, _, _ = np.linalg.lstsq(xy_centered, uv_centered, rcond=None)
+    J = J_T.T  # Транспонируем, чтобы получить стандартный Якобиан 2х2
+    du_dx = J[0, 0]
+    du_dy = J[0, 1]
+    dv_dx = J[1, 0]
+    dv_dy = J[1, 1]
+    rotation = 0.5 * (dv_dx - du_dy)  # Величина глобального вращения
+    shear = 0.5 * (du_dy + dv_dx)     # Величина чистая сдвига
+    return rotation, shear
+
 def get_matrix_K_from_frame(frame):
     height, width = frame.shape[:2]
 

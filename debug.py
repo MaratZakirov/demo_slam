@@ -12,6 +12,58 @@ def imshow(label: str, image: np.ndarray, use_cv=False):
         plt.title(label, fontsize=14, fontweight='bold')
         plt.show()
 
+def plot_flow_vectors(frame_a, points_2d_a, points_2d_b, max_arrows=100,
+                      scale=1.0, min_len=0.5, draw_points=True):
+    """
+    Рисует вектора оптического потока на первом кадре.
+
+    Parameters:
+        frame_a (np.ndarray): Первый цветной кадр
+        points_2d_a (np.ndarray): Точки на первом кадре (N x 2), порядок (x, y)
+        points_2d_b (np.ndarray): Точки на втором кадре (N x 2), порядок (x, y)
+        max_arrows (int): Максимум стрелок для отрисовки
+        scale (float): Множитель длины стрелки (для визуального усиления)
+        min_len (float): Минимальная длина вектора, чтобы его рисовать (в пикселях)
+        draw_points (bool): Рисовать ли сами точки
+    """
+    canvas = frame_a.copy()
+
+    # Вектора смещения: (dx, dy)
+    flow = points_2d_b - points_2d_a
+    lengths = np.linalg.norm(flow, axis=1)
+
+    # Фильтруем слишком короткие вектора — они визуально мусор
+    mask = lengths >= min_len
+    idxs = np.where(mask)[0]
+
+    # Ограничиваем количество
+    if len(idxs) > max_arrows:
+        # Берём самые длинные — они нагляднее
+        idxs = idxs[np.argsort(lengths[idxs])[::-1][:max_arrows]]
+
+    # Цвет по направлению угла (HSV → BGR), чтобы было видно куда кто идёт
+    for i in idxs:
+        pt_a = points_2d_a[i]
+        dx, dy = flow[i] * scale
+
+        p1 = (int(round(pt_a[0])), int(round(pt_a[1])))
+        p2 = (int(round(pt_a[0] + dx)), int(round(pt_a[1] + dy)))
+
+        # Угол в градусах [0..360) для раскраски
+        angle = (np.degrees(np.arctan2(dy, dx)) + 360.0) % 360.0
+        hue = int(angle / 2.0)  # 0..180 для OpenCV HSV
+        hsv = np.uint8([[[hue, 255, 255]]])
+        bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0, 0]
+        color = (int(bgr[0]), int(bgr[1]), int(bgr[2]))
+
+        # Стрелка
+        cv2.arrowedLine(canvas, p1, p2, color, 2, cv2.LINE_AA, tipLength=0.3)
+
+        if draw_points:
+            cv2.circle(canvas, p1, 2, color, -1)
+
+    imshow(f"Optical Flow (arrows={len(idxs)}, scale={scale})", canvas)
+
 def plot_matches(frame_a, frame_b, points_2d_a, points_2d_b, max_lines=30):
     """
     Визуализирует сопоставленные точки, рисуя линии между двумя кадрами.

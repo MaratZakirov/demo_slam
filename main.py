@@ -20,7 +20,7 @@ def process_stere_pair(frame_a, frame_b):
         frame_a, frame_b = frame_b, frame_a
         matched_pts_a, matched_pts_b = matched_pts_b, matched_pts_a
 
-    plot_flow_vectors(frames[0], matched_pts_a, matched_pts_b, max_arrows=700)
+    plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
 
     plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
 
@@ -49,7 +49,7 @@ def process_stere_pair(frame_a, frame_b):
 
     cloud_sparse = triangulate_points_numpy(pts_a_inliers, pts_b_inliers, K, R, t)
 
-    height, width = frames[0].shape[:2]
+    height, width = frame_a.shape[:2]
 
     # (считаем, что линза идеальная)
     dist_coeffs = np.zeros((5, 1), dtype=np.float32)

@@ -5,7 +5,7 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
-def process_stere_pair(frame_a, frame_b):
+def process_stereo_pair(frame_a, frame_b):
     disparity_alg = 'CNN'
 
     K = get_matrix_K_from_frame(frame_a)
@@ -95,7 +95,6 @@ def process_stere_pair(frame_a, frame_b):
         )
         disp = (stereo_sgbm.compute(imgL, imgR) / 16.0).astype(np.float32)
     elif disparity_alg == 'CNN':
-        #disp = compute_disparity_hitnet(rectified_frame_b, rectified_frame_a)
         disp = compute_disparity_hitnet(rectified_frame_a, rectified_frame_b)
     else:
         assert False
@@ -137,4 +136,4 @@ if __name__ == '__main__':
     frame_a = get_center_crop_coords(frames[1])
     frame_b = get_center_crop_coords(frames[2])
 
-    process_stere_pair(frame_a, frame_b)
+    process_stereo_pair(frame_a, frame_b)

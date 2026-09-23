@@ -12,11 +12,10 @@ def process_stere_pair(frame_a, frame_b):
 
     matched_pts_a, matched_pts_b = get_matches_using_optical_flow(frame_a, frame_b)
 
-    rotation, shear = decompose_2d_vector_field(matched_pts_a, matched_pts_b)
+    #rotation, shear = decompose_2d_vector_field(matched_pts_a, matched_pts_b)
 
     # L - R swap
-    #if np.median((matched_pts_a - matched_pts_b)[:, 0]) > 0:
-    if np.median((matched_pts_a - matched_pts_b)[:, 0]) > 0: #shear > 0:
+    if np.median((matched_pts_a - matched_pts_b)[:, 0]) < 0: #shear < 0:
         frame_a, frame_b = frame_b, frame_a
         matched_pts_a, matched_pts_b = matched_pts_b, matched_pts_a
 
@@ -73,13 +72,11 @@ def process_stere_pair(frame_a, frame_b):
 
     imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
 
-    if disparity_alg == 'SAD':
-        disp = compute_disparity_subpixel_numpy(rectified_frame_a, rectified_frame_b, max_disp=54)
-    elif disparity_alg == 'BM':
+    if disparity_alg == 'BM':
         imgL = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
         imgR = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
         stereo = cv2.StereoBM_create(numDisparities=64, blockSize=15)
-        disp = (stereo.compute(imgR, imgL) / 16).astype(np.float32)
+        disp = (stereo.compute(imgL, imgR) / 16).astype(np.float32)
     elif disparity_alg == 'SGBM':
         imgL = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
         imgR = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
@@ -97,9 +94,10 @@ def process_stere_pair(frame_a, frame_b):
             speckleRange=2,
             mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
         )
-        disp = (stereo_sgbm.compute(imgR, imgL) / 16.0).astype(np.float32)
+        disp = (stereo_sgbm.compute(imgL, imgR) / 16.0).astype(np.float32)
     elif disparity_alg == 'CNN':
-        disp = compute_disparity_hitnet(rectified_frame_b, rectified_frame_a)
+        #disp = compute_disparity_hitnet(rectified_frame_b, rectified_frame_a)
+        disp = compute_disparity_hitnet(rectified_frame_a, rectified_frame_b)
     else:
         assert False
 
@@ -133,4 +131,11 @@ if __name__ == '__main__':
     video_path = 'sample/kitchen.mp4'
     frames = load_frames(video_path, quiet=True)
     frames = frames[::10]
-    process_stere_pair(frames[0], frames[1])
+
+    model_height = 720
+    model_width  = 1280
+
+    frame_a = get_center_crop_coords(frames[0])
+    frame_b = get_center_crop_coords(frames[1])
+
+    process_stere_pair(frame_a, frame_b)

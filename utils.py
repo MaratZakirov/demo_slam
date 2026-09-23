@@ -169,85 +169,6 @@ def triangulate_points_numpy(pts_a, pts_b, K, R, t):
 
     return np.array(points_3d)
 
-def compute_disparity_subpixel_numpy(rect_a, rect_b, window_size=15, max_disp=80):
-    """
-    Расчет ПЛАВНОЙ карты диспаратности на чистом NumPy с субпиксельной интерполяцией.
-    """
-    gray_a = cv2.cvtColor(rect_a, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    gray_b = cv2.cvtColor(rect_b, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
-    h, w = gray_a.shape
-    half_w = window_size // 2
-
-    # Создаем 3D-куб NumPy размера (max_disp, H, W), чтобы сохранить значения ошибок для каждого сдвига
-    # Это необходимо для последующего поиска соседей (d-1) и (d+1)
-    sad_cube = np.full((max_disp, h, w), np.inf, dtype=np.float32)
-
-    min_sad = np.full((h, w), np.inf, dtype=np.float32)
-    disparity_map_int = np.zeros((h, w), dtype=np.int32)
-
-    kernel = np.ones((window_size, window_size), dtype=np.float32)
-
-    # 1. Сбор данных (тот же цикл, но сохраняем историю SAD)
-    for d in range(max_disp):
-        if d >= w:
-            break
-
-        shifted_b = np.zeros_like(gray_b)
-        shifted_b[:, :w - d] = gray_b[:, d:]
-
-        abs_diff = np.abs(gray_a - shifted_b)
-        sad = cv2.filter2D(abs_diff, -1, kernel, borderType=cv2.BORDER_CONSTANT)
-
-        # Небольшое пространственное сглаживание самой стоимости (убирает прыжки пикселей)
-        sad = cv2.GaussianBlur(sad, (3, 3), 0)
-
-        valid_zone = np.zeros((h, w), dtype=bool)
-        valid_zone[:, d + half_w: w - half_w] = True
-
-        sad_cube[d] = np.where(valid_zone, sad, np.inf)
-
-        better_match = (sad < min_sad) & valid_zone
-        min_sad[better_match] = sad[better_match]
-        disparity_map_int[better_match] = d
-
-    # 2. МАГИЯ NUMPY: Векторная субпиксельная интерполяция параболой
-    # Создаем итоговую float32 карту
-    disparity_map_smooth = disparity_map_int.astype(np.float32)
-
-    # Нам нужны только те пиксели, у которых лучший сдвиг лежит внутри диапазона (есть соседи слева и справа)
-    # Иначе мы не сможем построить параболу
-    subpixel_mask = (disparity_map_int > 0) & (disparity_map_int < max_disp - 1)
-
-    if np.any(subpixel_mask):
-        # Вытаскиваем координаты пикселей, проходящих по маске
-        y_indices, x_indices = np.where(subpixel_mask)
-        d_best = disparity_map_int[subpixel_mask]
-
-        # Получаем значения ошибок SAD для лучшего сдвига, а также для его левого и правого соседей
-        # Используем продвинутую индексацию NumPy для мгновенной выборки из 3D-куба
-        sad_center = sad_cube[d_best, y_indices, x_indices]
-        sad_minus = sad_cube[d_best - 1, y_indices, x_indices]
-        sad_plus = sad_cube[d_best + 1, y_indices, x_indices]
-
-        # Математическая формула вершины параболы (коэффициент субпиксельного сдвига)
-        # Знаменатель защищаем от деления на ноль микро-числом 1e-5
-        denominator = 2.0 * (sad_minus + sad_plus - 2.0 * sad_center)
-        subpixel_delta = (sad_minus - sad_plus) / (denominator + 1e-5)
-
-        # Ограничиваем поправку диапазоном [-0.5, 0.5], чтобы математика не улетала из-за шума
-        subpixel_delta = np.clip(subpixel_delta, -0.5, 0.5)
-
-        # Записываем дробную поправку обратно в карту диспаратности
-        disparity_map_smooth[subpixel_mask] += subpixel_delta
-
-    # ФИНАЛЬНОЕ СГЛАЖИВАНИЕ ВОЛН:
-    # Фильтр Гаусса размера 3х3 или 5x5 с микро-радиусом размоет циклическую рябь параболы,
-    # превратив волны в идеально ровную, скользящую поверхность.
-    disparity_map_final = cv2.GaussianBlur(disparity_map_smooth, (5, 5), 0.5)
-
-    return disparity_map_final
-
 def apply_roi(rect_a, rect_b, roi_a, roi_b):
     x1, y1, w1, h1 = roi_a
     x2, y2, w2, h2 = roi_b
@@ -261,6 +182,37 @@ def apply_roi(rect_a, rect_b, roi_a, roi_b):
     rect_b = rect_b[y:y + h, x:x + w]
 
     return rect_a, rect_b
+
+def get_center_crop_coords(frame, target_w=720, target_h=1280):
+    img_h, img_w = frame.shape[:2]
+
+    # Вычисляем целевые пропорции (для 720x1280 это 0.5625)
+    target_aspect = target_w / target_h
+    img_aspect = img_w / img_h
+
+    # Определяем размеры рамки кропа в пикселях оригинала
+    if img_aspect < target_aspect:
+        # Кадр слишком широкий — берем всю высоту, сужаем ширину
+        crop_h = img_h
+        crop_w = int(img_h * target_aspect)
+    else:
+        # Кадр слишком узкий/высокий — берем всю ширину, урезаем высоту
+        crop_w = img_w
+        crop_h = int(img_w / target_aspect)
+
+    # Находим координаты центра
+    x_offset = (img_w - crop_w) // 2
+    y_offset = (img_h - crop_h) // 2
+
+    # Возвращаем кадрированный фрейм в исходном разрешении
+    frame = frame[y_offset:y_offset + crop_h, x_offset:x_offset + crop_w]
+
+    aspect_source = frame.shape[0] / frame.shape[1]
+    aspect_target = target_w / target_h
+
+    np.isclose(aspect_target, aspect_source, atol=1e-5, rtol=1e-5)
+
+    return frame
 
 def compute_disparity_hitnet(rect_a, rect_b, height=720, width=1280):
     import onnxruntime as ort

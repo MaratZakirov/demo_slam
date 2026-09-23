@@ -10,43 +10,42 @@ def process_stere_pair(frame_a, frame_b):
 
     K = get_matrix_K_from_frame(frame_a)
 
-    matched_pts_a, matched_pts_b = get_matches_using_optical_flow(frame_a, frame_b)
+    while True:
+        matched_pts_a, matched_pts_b = get_matches_using_optical_flow(frame_a, frame_b)
 
-    #rotation, shear = decompose_2d_vector_field(matched_pts_a, matched_pts_b)
+        # К — (Intrinsic Matrix)
+        E, mask = cv2.findEssentialMat(
+            matched_pts_a,
+            matched_pts_b,
+            cameraMatrix=K,
+            method=cv2.RANSAC,
+            prob=0.999,
+            threshold=0.5
+        )
 
-    # L - R swap
-    if np.median((matched_pts_a - matched_pts_b)[:, 0]) < 0: #shear < 0:
-        frame_a, frame_b = frame_b, frame_a
-        matched_pts_a, matched_pts_b = matched_pts_b, matched_pts_a
+        # Фильтруем точки по маске RANSAC и раскладываем матрицу E на R и t
+        points, R, t, mask_pose = cv2.recoverPose(E, matched_pts_a, matched_pts_b, cameraMatrix=K, mask=mask)
 
-    plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
-
-    plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
-
-    # К — (Intrinsic Matrix)
-    E, mask = cv2.findEssentialMat(
-        matched_pts_a,
-        matched_pts_b,
-        cameraMatrix=K,
-        method=cv2.RANSAC,
-        prob=0.999,
-        threshold=0.5
-    )
-
-    # Фильтруем точки по маске RANSAC и раскладываем матрицу E на R и t
-    points, R, t, mask_pose = cv2.recoverPose(E, matched_pts_a, matched_pts_b, cameraMatrix=K, mask=mask)
+        # we work only with L - R pairs
+        if t[0, 0] < 0:
+            # plot optical flow
+            plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
+            plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
+            break
+        else:
+            # swap frames
+            frame_a, frame_b = frame_b, frame_a
+            print('Swap frames')
 
     valid_mask = mask.ravel() == 1
     pts_a_inliers = matched_pts_a[valid_mask]
     pts_b_inliers = matched_pts_b[valid_mask]
 
+    # plot optical flow again
     plot_flow_vectors(frame_a, pts_a_inliers, pts_b_inliers, max_arrows=700)
-
     plot_matches(frame_a, frame_b, pts_a_inliers, pts_b_inliers)
 
     visualize_scene_matplotlib(pts_a_inliers, pts_b_inliers, K, R, t)
-
-    cloud_sparse = triangulate_points_numpy(pts_a_inliers, pts_b_inliers, K, R, t)
 
     height, width = frame_a.shape[:2]
 
@@ -135,7 +134,7 @@ if __name__ == '__main__':
     model_height = 720
     model_width  = 1280
 
-    frame_a = get_center_crop_coords(frames[0])
-    frame_b = get_center_crop_coords(frames[1])
+    frame_a = get_center_crop_coords(frames[1])
+    frame_b = get_center_crop_coords(frames[2])
 
     process_stere_pair(frame_a, frame_b)

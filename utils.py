@@ -122,53 +122,6 @@ def get_matrix_K_from_frame(frame):
 
     return K
 
-def triangulate_points_numpy(pts_a, pts_b, K, R, t):
-    """
-    Триангуляция точек на чистом NumPy с использованием SVD.
-
-    Parameters:
-        pts_a (np.ndarray): Точки с первого кадра (N x 2)
-        pts_b (np.ndarray): Точки со второго кадра (N x 2)
-        K (np.ndarray): Матрица камеры (3 x 3)
-        R (np.ndarray): Матрица вращения (3 x 3)
-        t (np.ndarray): Вектор сдвига (3 x 1)
-
-    Returns:
-        points_3d (np.ndarray): Массив 3D координат (N x 3)
-    """
-    # 1. Строим матрицы проекции для обеих камер (размер 3x4)
-    # Первая камера в начале координат
-    P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
-    # Вторая камера смещена на R и t
-    P2 = K @ np.hstack((R, t.reshape(3, 1)))
-
-    num_points = pts_a.shape[0]
-    points_3d = []
-
-    # Решаем систему уравнений для каждой пары точек
-    for i in range(num_points):
-        u1, v1 = pts_a[i]
-        u2, v2 = pts_b[i]
-
-        # Составляем матрицу А (размер 4x4) на основе уравнений проекции
-        A = np.zeros((4, 4))
-        A[0] = u1 * P1[2, :] - P1[0, :]
-        A[1] = v1 * P1[2, :] - P1[1, :]
-        A[2] = u2 * P2[2, :] - P2[0, :]
-        A[3] = v2 * P2[2, :] - P2[1, :]
-
-        # Решаем систему A * X = 0 через SVD разложение в NumPy
-        _, _, Vt = np.linalg.svd(A)
-
-        # Решение — это последняя строка матрицы Vt (вектор с наименьшим сингулярным числом)
-        X_homogeneous = Vt[-1]
-
-        # Переводим из однородных координат в обычные 3D (делением на четвертую компоненту)
-        X_3d = X_homogeneous[:3] / X_homogeneous[3]
-        points_3d.append(X_3d)
-
-    return np.array(points_3d)
-
 def apply_roi(rect_a, rect_b, roi_a, roi_b):
     x1, y1, w1, h1 = roi_a
     x2, y2, w2, h2 = roi_b

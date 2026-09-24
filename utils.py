@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import onnxruntime as ort
+import os
 
 def load_frames(video_path: str, quiet=True) -> list:
     cap = cv2.VideoCapture(video_path)
@@ -167,40 +169,42 @@ def get_center_crop_coords(frame, target_w=720, target_h=1280):
 
     return frame
 
-def compute_disparity_hitnet(rect_a, rect_b, height=720, width=1280):
-    import onnxruntime as ort
+class HitNetDisparity:
+    def __init__(self, model_path="models/model_float32.onnx", height=720, width=1280):
+        self.model_path = model_path
+        self.height = height
+        self.width = width
+        self.input_name = "input"
 
-    onnx_opts = ort.SessionOptions()
-    onnx_opts.intra_op_num_threads = 6
-    onnx_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    onnx_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    onnx_session = ort.InferenceSession("models/model_float32.onnx", onnx_opts)
-    input_name = "input"
+        onnx_opts = ort.SessionOptions()
+        onnx_opts.intra_op_num_threads = 6
+        onnx_opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        onnx_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    # TODO not ideal proportions are damaged
-    resized_a = cv2.resize(rect_a, (width, height), interpolation=cv2.INTER_AREA)
-    resized_b = cv2.resize(rect_b, (width, height), interpolation=cv2.INTER_AREA)
+        self.session = ort.InferenceSession(self.model_path, onnx_opts)
 
-    rgb_a = cv2.cvtColor(resized_a, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    rgb_b = cv2.cvtColor(resized_b, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    def __call__(self, rect_a, rect_b):
+        resized_a = cv2.resize(rect_a, (self.width, self.height), interpolation=cv2.INTER_AREA)
+        resized_b = cv2.resize(rect_b, (self.width, self.height), interpolation=cv2.INTER_AREA)
 
-    # Склеиваем две матрицы (3, 480, 640) по оси 0, получаем (6, 480, 640)
-    outputs = onnx_session.run(None,
-        {input_name: np.concatenate((
-            np.transpose(rgb_a, (2, 0, 1)),
-            np.transpose(rgb_b, (2, 0, 1))), axis=0)[None]})
+        rgb_a = cv2.cvtColor(resized_a, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        rgb_b = cv2.cvtColor(resized_b, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
-    # Вытаскиваем результат и схлопываем лишние размерности до плоской матрицы (480, 640)
-    disp_float = np.squeeze(outputs[0])
+        outputs = self.session.run(None, {
+            self.input_name: np.concatenate((
+                np.transpose(rgb_a, (2, 0, 1)),
+                np.transpose(rgb_b, (2, 0, 1))
+            ), axis=0)[None]
+        })
 
-    orig_h, orig_w = rect_a.shape[:2]
-    disp_resized = cv2.resize(disp_float, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        disp_float = np.squeeze(outputs[0])
 
-    # Пропорциональный пересчет масштаба диспаратности под новую ширину экрана
-    scale_factor = orig_w / width
-    disp_resized = disp_resized * scale_factor
+        orig_h, orig_w = rect_a.shape[:2]
+        disp_resized = cv2.resize(disp_float, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
 
-    # Мягкая маска отсечки невалидных зон
-    disp_resized[disp_resized <= 0.1] = np.nan
+        scale_factor = orig_w / self.width
+        disp_resized = disp_resized * scale_factor
 
-    return disp_resized
+        disp_resized[disp_resized <= 0.1] = np.nan
+
+        return disp_resized

@@ -6,8 +6,6 @@ import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
 def process_stereo_pair(frame_a, frame_b):
-    disparity_alg = 'CNN'
-
     K = get_matrix_K_from_frame(frame_a)
 
     while True:
@@ -71,33 +69,7 @@ def process_stereo_pair(frame_a, frame_b):
 
     imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
 
-    if disparity_alg == 'BM':
-        imgL = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
-        imgR = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
-        stereo = cv2.StereoBM_create(numDisparities=64, blockSize=15)
-        disp = (stereo.compute(imgL, imgR) / 16).astype(np.float32)
-    elif disparity_alg == 'SGBM':
-        imgL = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2GRAY)
-        imgR = cv2.cvtColor(rectified_frame_b, cv2.COLOR_BGR2GRAY)
-
-        # Создаем объект SGBM (параметры P1 и P2 критически важны для сглаживания)
-        stereo_sgbm = cv2.StereoSGBM_create(
-            minDisparity=0,
-            numDisparities=64,   # Должно делиться на 16
-            blockSize=5,         # Обычно меньше, чем в BM (3, 5 или 7)
-            P1=8 * 3 * 5 ** 2,   # Штраф за небольшие изменения диспаратности
-            P2=32 * 3 * 5 ** 2,  # Штраф за резкие разрывы (границы объектов)
-            disp12MaxDiff=1,
-            uniquenessRatio=15,
-            speckleWindowSize=100,
-            speckleRange=2,
-            mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
-        )
-        disp = (stereo_sgbm.compute(imgL, imgR) / 16.0).astype(np.float32)
-    elif disparity_alg == 'CNN':
-        disp = compute_disparity_hitnet(rectified_frame_a, rectified_frame_b)
-    else:
-        assert False
+    disp = HitNetDisparity()(rectified_frame_a, rectified_frame_b)
 
     # Чтобы увидеть её глазами, нормализуем для вывода на экран (0-255)
     # Замена для визуализации
@@ -133,7 +105,7 @@ if __name__ == '__main__':
     model_height = 720
     model_width  = 1280
 
-    frame_a = get_center_crop_coords(frames[1])
-    frame_b = get_center_crop_coords(frames[2])
+    frame_a = get_center_crop_coords(frames[2])
+    frame_b = get_center_crop_coords(frames[1])
 
     process_stereo_pair(frame_a, frame_b)

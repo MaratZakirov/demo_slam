@@ -5,7 +5,7 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
-def process_stereo_pair(frame_a, frame_b):
+def process_stereo_pair(frame_a, frame_b, prev_matches=None):
     K = get_matrix_K_from_frame(frame_a)
 
     while True:
@@ -31,6 +31,7 @@ def process_stereo_pair(frame_a, frame_b):
             plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
             break
         else:
+            assert False, 'Temporary assert reorder frames'
             # swap frames
             frame_a, frame_b = frame_b, frame_a
             print('Swap frames')
@@ -108,5 +109,7 @@ if __name__ == '__main__':
 
     frame_a = get_center_crop_coords(frames[2])
     frame_b = get_center_crop_coords(frames[1])
+    frame_c = get_center_crop_coords(frames[0])
 
     process_stereo_pair(frame_a, frame_b)
+    #process_stereo_pair(frame_b, frame_c)

@@ -60,6 +60,7 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
         R=R,
         T=t.reshape(3, 1)
     )
+    assert min(roi1) >= 0 # rare case
 
     map1_x, map1_y = cv2.initUndistortRectifyMap(K, None, R1, P1, (width, height), cv2.CV_32FC1)
     map2_x, map2_y = cv2.initUndistortRectifyMap(K, None, R2, P2, (width, height), cv2.CV_32FC1)
@@ -87,6 +88,9 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
 
     colors = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2RGB)
     mask = (disp > 0.02) & (disp < 120) & (np.isfinite(points_3d[..., 2])) & (points_3d[..., 2] < up_bound) & (points_3d[..., 2] > lo_bound)
+    roi_mask = np.zeros_like(mask)
+    roi_mask[roi1[1]:roi1[1] + roi1[3], roi1[0]:roi1[0] + roi1[2]] = True
+    mask = mask & roi_mask
 
     points_3d[~mask] = 0
     colors[~mask]    = 0

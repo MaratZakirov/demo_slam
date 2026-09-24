@@ -5,11 +5,12 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
-def process_stereo_pair(frame_a, frame_b, prev_matches=None):
+def process_stereo_pair(frame_a, frame_b, prev_points=None, verbose=True):
     K = get_matrix_K_from_frame(frame_a)
 
+    # TODO replace by view/camera sorting algorithm
     while True:
-        matched_pts_a, matched_pts_b = get_matches_using_optical_flow(frame_a, frame_b)
+        matched_pts_a, matched_pts_b, prev_mask = get_matches_using_optical_flow(frame_a, frame_b, prev_points=prev_points)
 
         # К — (Intrinsic Matrix)
         E, mask = cv2.findEssentialMat(
@@ -27,8 +28,9 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
         # we work only with L - R pairs
         if t[0, 0] < 0:
             # plot optical flow
-            plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
-            plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
+            if verbose:
+                plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
+                plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
             break
         else:
             assert False, 'Temporary assert reorder frames'
@@ -41,10 +43,10 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
     pts_b_inliers = matched_pts_b[valid_mask]
 
     # plot optical flow again
-    plot_flow_vectors(frame_a, pts_a_inliers, pts_b_inliers, max_arrows=700)
-    plot_matches(frame_a, frame_b, pts_a_inliers, pts_b_inliers)
-
-    visualize_scene_matplotlib(pts_a_inliers, pts_b_inliers, K, R, t)
+    if verbose:
+        plot_flow_vectors(frame_a, pts_a_inliers, pts_b_inliers, max_arrows=700)
+        plot_matches(frame_a, frame_b, pts_a_inliers, pts_b_inliers)
+        visualize_scene_matplotlib(pts_a_inliers, pts_b_inliers, K, R, t)
 
     height, width = frame_a.shape[:2]
 
@@ -69,7 +71,8 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
     rectified_frame_a = cv2.remap(frame_a, map1_x, map1_y, cv2.INTER_LINEAR)
     rectified_frame_b = cv2.remap(frame_b, map2_x, map2_y, cv2.INTER_LINEAR)
 
-    imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
+    if verbose:
+        imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
 
     disp = HitNetDisparity()(rectified_frame_a, rectified_frame_b)
 
@@ -96,12 +99,18 @@ def process_stereo_pair(frame_a, frame_b, prev_matches=None):
     colors[~mask]    = 0
     conf[~mask]      = 0
 
-    # (N, 3)
-    mask = points_3d[..., 2] > 0
-    final_points = points_3d[mask]  # Массив размера (N, 3) с координатами X, Y, Z
-    final_colors = colors[mask]     # Массив размера (N, 3) с цветами R, G, B
+    if verbose:
+        mask = points_3d[..., 2] > 0
+        final_points = points_3d[mask]  # Массив размера (N, 3) с координатами X, Y, Z
+        final_colors = colors[mask]  # Массив размера (N, 3) с цветами R, G, B
+        save_ply_fast_numpy('myscene.ply', final_points, final_colors)
 
-    save_ply_fast_numpy('myscene.ply', final_points, final_colors)
+    # points correction
+    if prev_mask.sum() > 0:
+        pass
+        #S =
+
+    return {'points_3d' : points_3d, 'colors' : colors, 'conf' : conf, 'matches' : (pts_a_inliers, pts_b_inliers)}
 
 if __name__ == '__main__':
     video_path = 'sample/kitchen.mp4'
@@ -115,5 +124,5 @@ if __name__ == '__main__':
     frame_b = get_center_crop_coords(frames[1])
     frame_c = get_center_crop_coords(frames[0])
 
-    process_stereo_pair(frame_a, frame_b)
-    #process_stereo_pair(frame_b, frame_c)
+    pair_ab = process_stereo_pair(frame_a, frame_b)
+    #pair_bc = process_stereo_pair(frame_b, frame_c, prev_points=pair_ab['matches'][1])

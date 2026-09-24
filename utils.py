@@ -44,7 +44,7 @@ def load_frames(video_path: str, quiet=True) -> list:
 
     return frames
 
-def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
+def get_matches_using_optical_flow(frame_a, frame_b, prev_points=None, max_features=1000):
     """
     Находит сопоставленные точки между двумя кадрами с использованием
     локального оптического потока Лукаса-Канаде вместо глобального SIFT.
@@ -73,25 +73,31 @@ def get_matches_using_optical_flow(frame_a, frame_b, max_features=1000):
     if pts_a_raw is None or len(pts_a_raw) == 0:
         return np.empty((0, 2), dtype=np.float32), np.empty((0, 2), dtype=np.float32)
 
-    # 3. Настраиваем параметры локального поиска Лукаса-Канаде
+    # Настраиваем параметры локального поиска Лукаса-Канаде
     lk_params = dict(
         winSize=(21, 21),  # Ищем точку строго в локальном окне 21x21 пиксель
         maxLevel=3,  # Пирамиды изображений для отслеживания быстрых сдвигов
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
     )
 
-    # 4. Вычисляем оптический поток (смещение точек на кадр B)
+    if not prev_points is None:
+        pts_a_raw = np.concatenate([prev_points[:, None], pts_a_raw])
+        prev_mask = np.zeros(len(pts_a_raw))
+        prev_mask[:len(prev_points)] = True
+    else:
+        prev_mask = np.zeros(len(pts_a_raw))
+
+    # Вычисляем оптический поток (смещение точек на кадр B)
     # status == 1 для точек, которые успешно нашлись в локальном окне на кадре B
     pts_b_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_a, gray_b, pts_a_raw, None, **lk_params)
 
-    # 5. Фильтруем точки с помощью NumPy-маски status
+    # Фильтруем точки с помощью NumPy-маски status
     valid_mask = (status == 1).reshape(-1)
-
-    # Избавляемся от лишней оси координат OpenCV (N, 1, 2) -> (K, 2)
     matched_pts_a = pts_a_raw[valid_mask].reshape(-1, 2)
     matched_pts_b = pts_b_raw[valid_mask].reshape(-1, 2)
+    prev_mask     = prev_mask[valid_mask]
 
-    return matched_pts_a, matched_pts_b
+    return matched_pts_a, matched_pts_b, prev_mask
 
 def decompose_2d_vector_field(xy: np.ndarray, uv: np.ndarray):
     xy_centered = xy - np.mean(xy, axis=0)

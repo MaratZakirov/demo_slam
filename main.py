@@ -78,22 +78,23 @@ def process_stereo_pair(frame_a, frame_b):
     imshow("Disparity Map", disp_visual)
 
     points_3d = cv2.reprojectImageTo3D(disp, Q)
+    conf = np.ones_like(disp)
+
+    percentile = 4
+    lo_bound = np.percentile(points_3d[..., 2], percentile)
+    up_bound = np.percentile(points_3d[..., 2], 100 - percentile)
 
     colors = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2RGB)
-    mask = (disp > 0.5) & (disp < 64) & (np.isfinite(points_3d[:, :, 2]))
+    mask = (disp > 0.02) & (disp < 120) & (np.isfinite(points_3d[..., 2])) & (points_3d[..., 2] < up_bound) & (points_3d[..., 2] > lo_bound)
+
+    points_3d[~mask] = 0
+    colors[~mask]    = 0
+    conf[~mask]      = 0
 
     # (N, 3)
+    mask = points_3d[..., 2] > 0
     final_points = points_3d[mask]  # Массив размера (N, 3) с координатами X, Y, Z
     final_colors = colors[mask]     # Массив размера (N, 3) с цветами R, G, B
-
-    # filter out all outliers
-    percentile = 7
-    for i in range(3):
-        lower_bound = np.percentile(final_points[:, i], percentile)
-        upper_bound = np.percentile(final_points[:, i], 100 - percentile)
-        mask = (final_points[:, i] < upper_bound) & (final_points[:, i] > lower_bound)
-        final_points = final_points[mask]
-        final_colors = final_colors[mask]
 
     save_ply_fast_numpy('myscene.ply', final_points, final_colors)
 

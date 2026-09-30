@@ -4,18 +4,27 @@ from utils import *
 from debug import *
 import matplotlib.pyplot as plt
 
-# TODO we do not consider vertical stereopairs
-def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 1, 2)), verbose=True):
+# Consider only Left - Right stereo-pairs
+def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), verbose=True):
     K = get_matrix_K_from_frame(frame_a)
 
-    matched_pts_a, matched_pts_b, matches_l_prev, mask_prev = get_matches_using_optical_flow(frame_a, frame_b, pts_l_prev=pts_l_prev)
+    matched_pts_a, matched_pts_b, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_a, frame_b, pts_l_prev=pts_l_prev)
+
+    # filtering previous data
+    pts_l_prev = pts_l_prev[mask_prev]
+    pts_r_prev = pts_r_prev[mask_prev]
+    pts_3d_prev = pts_3d_prev[mask_prev]
 
     E, mask = cv2.findEssentialMat(
-        matched_pts_a, matched_pts_b, cameraMatrix=K,
-        method=cv2.RANSAC, prob=0.999, threshold=0.5)
+        np.concatenate([matched_pts_a, pts_l_prev], axis=0),
+        np.concatenate([matched_pts_b, pts_r_prev], axis=0),
+        cameraMatrix=K, method=cv2.RANSAC, prob=0.999, threshold=0.5)
 
     points, R, t, mask_pose = cv2.recoverPose(
-        E, matched_pts_a, matched_pts_b, cameraMatrix=K, mask=mask)
+        E,
+        np.concatenate([matched_pts_a, pts_l_prev], axis=0),
+        np.concatenate([matched_pts_b, pts_r_prev], axis=0),
+        cameraMatrix=K, mask=mask)
 
     assert t[0, 0] < 0, 'Reorder frames from left to right'
 
@@ -23,53 +32,46 @@ def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 1, 2)), verbos
         plot_flow_vectors(frame_a, matched_pts_a, matched_pts_b, max_arrows=700)
         plot_matches(frame_a, frame_b, matched_pts_a, matched_pts_b)
 
-    valid_mask    = mask.ravel() == 1
-    pts_a_inliers = matched_pts_a[valid_mask]
-    pts_b_inliers = matched_pts_b[valid_mask]
+    N = len(matched_pts_a)
+    valid_mask    = mask_pose.ravel() == 1
+    pts_a_inliers = matched_pts_a[:N][valid_mask[:N]]
+    pts_b_inliers = matched_pts_b[:N][valid_mask[:N]]
+
+    # filtering previous data
+    pts_l_prev = pts_l_prev[valid_mask[N:]]
+    pts_r_prev = pts_r_prev[valid_mask[N:]]
+    pts_3d_prev = pts_3d_prev[valid_mask[N:]]
 
     #if verbose:
     #    print(f'[pair] matched={len(matched_pts_a)}  inliers={valid_mask.sum()}  '
     #          f'inherited_among_inliers={inherited.sum()}')
 
-    if 0:#pts_ab_xyz is not None and inherited.sum() >= 3:
-        prev_3d = pts_ab_xyz[prev_idx[inherited], 4:]
-        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
-                                      K @ np.hstack([R, t.reshape(3, 1)]),
-                                      pts_a_inliers[inherited].T, pts_b_inliers[inherited].T)
-        curr_3d = (pts4d[:3] / pts4d[3]).T
+    # use base corretion
+    if len(pts_3d_prev) >= 3:
+        pts_4d_curr = cv2.triangulatePoints(
+            K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+            K @ np.hstack([R, t.reshape(3, 1)]),
+            pts_l_prev.T, pts_r_prev.T)
+        pts_3d_curr = (pts_4d_curr[:3] / pts_4d_curr[3]).T
 
-        z_prev = np.median(np.abs(prev_3d[:, 2]))
-        z_curr = np.median(np.abs(curr_3d[:, 2]))
-        if z_curr > 1e-9:
-            scale = z_prev / z_curr
-            t = t * scale
-            if verbose:
-                print(f'[pair] z_prev={z_prev:.4f} z_curr={z_curr:.4f} scale={scale:.4f}')
+        # TODO I have questions for this...
+        scale = np.median(np.abs(pts_3d_prev[:, 2])) / np.median(np.abs(pts_3d_curr[:, 2]))
 
-        # Triangulating my key points
-        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
-                                      K @ np.hstack([R, t.reshape(3, 1)]),
-                                      pts_a_inliers.T, pts_b_inliers.T)
-        inliers3d = (pts4d[:3] / pts4d[3]).T
+        t = t * scale
 
-        pts_ab_xyz = np.concatenate((pts_a_inliers[prev_idx[inherited]], pts_b_inliers[prev_idx[inherited]], inliers3d[prev_idx[inherited]]), axis=1)
+        if verbose:
+            print(f'[pair] z_prev={np.median(np.abs(pts_3d_prev[:, 2])):.4f} z_curr={np.median(np.abs(pts_3d_curr[:, 2])):.4f} scale={scale:.4f}')
 
-        # return just R and t for A -> B camera coordinated system transition
-        # inliers3d - 3d points in A coordinate system
-        # matches_pts_b points (2D) to find in B - C stereo pair
-        return R, t, inliers3d[prev_idx[inherited]], pts_ab_xyz
-    else:
-        # Triangulating my key points
-        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
-                                      K @ np.hstack([R, t.reshape(3, 1)]), pts_a_inliers.T, pts_b_inliers.T)
-        inliers3d = (pts4d[:3] / pts4d[3]).T
+    # now we have correct t, so we can traingulate new current points
+    pts_4d = cv2.triangulatePoints(
+        K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+        K @ np.hstack([R, t.reshape(3, 1)]),
+        pts_a_inliers.T, pts_b_inliers.T)
+    pts_3d = (pts_4d[:3] / pts_4d[3]).T
 
-        pts_ab_xyz = np.concatenate((pts_a_inliers, pts_b_inliers, inliers3d), axis=1)
-
-        # return just R and t for A -> B camera coordinated system transition
-        # inliers3d - 3d points in A coordinate system
-        # matches_pts_b points (2D) to find in B - C stereo pair
-        return R, t, inliers3d, pts_ab_xyz
+    # Return R, t, + key points on right camera (will be left for next stereo-pair)
+    # calculated points 3d for these keypoints
+    return R, t, pts_b_inliers, pts_3d
 
     complex_stuff_which_i_do_not_need_yet = False
     if complex_stuff_which_i_do_not_need_yet:
@@ -165,15 +167,12 @@ if __name__ == '__main__':
     frame_c = get_center_crop_coords(frames[0])
 
     print('=== pair_ab ===')
-    R_ab, t_ab, inliers3d_ab, pts_ab_xyz_ab = process_stereo_pair(frame_a, frame_b)
-    exit()
+    R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab = process_stereo_pair(frame_a, frame_b)
 
     print('=== pair_bc ===')
-    R_bc, t_bc, inliers3d_bc, pts_ab_xyz_bc = process_stereo_pair(frame_b, frame_c)
+    R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab)
 
-    inliers3d_bc_in_ab = inliers3d_bc @ R_ab.T - t_ab.T
-
-    show_3d_match(inliers3d_ab, inliers3d_bc_in_ab)
+    show_3d_match(key_pts_3d_ab, key_pts_3d_bc @ R_ab - t_ab.T)
 
     #print('=== fuse ===')
     #P, C = fuse_pairs(pair_ab, pair_bc, use_icp=True, verbose=True)

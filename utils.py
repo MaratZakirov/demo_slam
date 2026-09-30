@@ -44,7 +44,7 @@ def load_frames(video_path: str, quiet=True) -> list:
 
     return frames
 
-def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros((0, 1, 2)), max_features=1000):
+def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), max_features=1000):
     """
     Находит сопоставленные точки между двумя кадрами с использованием
     локального оптического потока Лукаса-Канаде вместо глобального SIFT.
@@ -75,7 +75,7 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros(
     )
 
     N = len(pts_l_raw)
-    pts_l_raw = np.concatenate([pts_l_raw, pts_l_prev], dtype=np.float32, axis=0)
+    pts_l_raw = np.concatenate([pts_l_raw, pts_l_prev.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
 
     # Вычисляем оптический поток (смещение точек на кадр B)
     # status == 1 для точек, которые успешно нашлись в локальном окне на кадре B
@@ -86,7 +86,7 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros(
     matched_pts_l = pts_l_raw[:N][valid_mask[:N]].reshape(-1, 2)
     matched_pts_r = pts_r_raw[:N][valid_mask[:N]].reshape(-1, 2)
 
-    pts_r_prev = pts_r_raw[N:]
+    pts_r_prev = pts_r_raw[N:].reshape(-1, 2)
     assert len(pts_r_prev) == len(pts_l_prev)
 
     # return artifacts plus residual mask of validness for previois matches

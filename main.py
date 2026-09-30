@@ -5,11 +5,10 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # TODO we do not consider vertical stereopairs
-def process_stereo_pair(frame_a, frame_b, pts_ab_xyz=None, verbose=True):
+def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 1, 2)), verbose=True):
     K = get_matrix_K_from_frame(frame_a)
 
-    matched_pts_a, matched_pts_b, prev_idx = get_matches_using_optical_flow(
-        frame_a, frame_b, prev_points=pts_ab_xyz if pts_ab_xyz is not None else None)
+    matched_pts_a, matched_pts_b, matches_l_prev, mask_prev = get_matches_using_optical_flow(frame_a, frame_b, pts_l_prev=pts_l_prev)
 
     E, mask = cv2.findEssentialMat(
         matched_pts_a, matched_pts_b, cameraMatrix=K,
@@ -27,14 +26,12 @@ def process_stereo_pair(frame_a, frame_b, pts_ab_xyz=None, verbose=True):
     valid_mask    = mask.ravel() == 1
     pts_a_inliers = matched_pts_a[valid_mask]
     pts_b_inliers = matched_pts_b[valid_mask]
-    prev_idx      = prev_idx[valid_mask]
-    inherited     = prev_idx >= 0
 
-    if verbose:
-        print(f'[pair] matched={len(matched_pts_a)}  inliers={valid_mask.sum()}  '
-              f'inherited_among_inliers={inherited.sum()}')
+    #if verbose:
+    #    print(f'[pair] matched={len(matched_pts_a)}  inliers={valid_mask.sum()}  '
+    #          f'inherited_among_inliers={inherited.sum()}')
 
-    if pts_ab_xyz is not None and inherited.sum() >= 3:
+    if 0:#pts_ab_xyz is not None and inherited.sum() >= 3:
         prev_3d = pts_ab_xyz[prev_idx[inherited], 4:]
         pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
                                       K @ np.hstack([R, t.reshape(3, 1)]),
@@ -169,9 +166,10 @@ if __name__ == '__main__':
 
     print('=== pair_ab ===')
     R_ab, t_ab, inliers3d_ab, pts_ab_xyz_ab = process_stereo_pair(frame_a, frame_b)
+    exit()
 
     print('=== pair_bc ===')
-    R_bc, t_bc, inliers3d_bc, pts_ab_xyz_bc = process_stereo_pair(frame_b, frame_c, pts_ab_xyz=pts_ab_xyz_ab)
+    R_bc, t_bc, inliers3d_bc, pts_ab_xyz_bc = process_stereo_pair(frame_b, frame_c)
 
     inliers3d_bc_in_ab = inliers3d_bc @ R_ab.T - t_ab.T
 

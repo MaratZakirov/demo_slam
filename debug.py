@@ -237,3 +237,20 @@ def visualize_scene_matplotlib(pts_a, pts_b, K, R, t):
     ax.legend()
     plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
     plt.show()
+
+def show_3d_match(pa_3d, pb_3d):
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    ax.scatter(pa_3d[:, 0], pa_3d[:, 1], pa_3d[:, 2], c='blue', s=30, label='3D Points A')
+    ax.scatter(pb_3d[:, 0], pb_3d[:, 1], pb_3d[:, 2], c='red',  s=30, label='3D Points B')
+
+    # Настройка осей координат по стандарту OpenCV (ось Y вниз, Z вперед)
+    ax.set_xlabel('X (Right)')
+    ax.set_ylabel('Y (Down)')
+    ax.set_zlabel('Z (Depth)')
+    ax.invert_yaxis()  # Переворачиваем Y, чтобы графический верх был верхом в реальности
+
+    ax.legend()
+    plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
+    plt.show()

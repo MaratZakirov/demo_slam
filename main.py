@@ -5,7 +5,7 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # Consider only Left - Right stereo-pairs
-def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), verbose=True):
+def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True):
     K = get_matrix_K_from_frame(frame_a)
 
     matched_pts_a, matched_pts_b, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_a, frame_b, pts_l_prev=pts_l_prev)
@@ -61,6 +61,16 @@ def process_stereo_pair(frame_a, frame_b, pts_l_prev=np.zeros((0, 2)), pts_3d_pr
 
         if verbose:
             print(f'[pair] z_prev={np.median(np.abs(pts_3d_prev[:, 2])):.4f} z_curr={np.median(np.abs(pts_3d_curr[:, 2])):.4f} scale={scale:.4f}')
+
+        # Recalculate with correct t
+        if not attributes is None:
+            pts_4d_curr = cv2.triangulatePoints(
+                K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+                K @ np.hstack([R, t.reshape(3, 1)]),
+                pts_l_prev.T, pts_r_prev.T)
+            pts_3d = (pts_4d_curr[:3] / pts_4d_curr[3]).T
+            attributes['pts_3d_curr'] = pts_3d
+            attributes['pts_3d_prev'] = pts_3d_prev
 
     # now we have correct t, so we can traingulate new current points
     pts_4d = cv2.triangulatePoints(
@@ -170,9 +180,17 @@ if __name__ == '__main__':
     R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab = process_stereo_pair(frame_a, frame_b)
 
     print('=== pair_bc ===')
-    R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab)
+    attr = {}
+    R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr)
 
     show_3d_match(key_pts_3d_ab, key_pts_3d_bc @ R_ab - t_ab.T)
+    show_3d_match(attr['pts_3d_prev'], attr['pts_3d_curr'] @ R_ab - t_ab.T)
+
+    # Тест на включенность
+    print('Тест на включенность:', (np.sum(np.abs(key_pts_3d_ab[:, None] - attr['pts_3d_prev'][None]), axis=2) == 0).sum(), min(len(key_pts_3d_ab), len(attr['pts_3d_prev'])))
+
+    # Тест на невязку
+    print('Тест на невязку:', np.median(np.abs((attr['pts_3d_prev'] - (attr['pts_3d_curr'] @ R_ab - t_ab.T)))))
 
     #print('=== fuse ===')
     #P, C = fuse_pairs(pair_ab, pair_bc, use_icp=True, verbose=True)

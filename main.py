@@ -36,10 +36,9 @@ def process_stereo_pair(frame_a, frame_b, pts_ab_xyz=None, verbose=True):
 
     if pts_ab_xyz is not None and inherited.sum() >= 3:
         prev_3d = pts_ab_xyz[prev_idx[inherited], 4:]
-        P1_tri = K @ np.hstack([np.eye(3), np.zeros((3, 1))])
-        P2_tri = K @ np.hstack([R, t.reshape(3, 1)])
-        pts4d = cv2.triangulatePoints(
-            P1_tri, P2_tri, pts_a_inliers[inherited].T, pts_b_inliers[inherited].T)
+        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+                                      K @ np.hstack([R, t.reshape(3, 1)]),
+                                      pts_a_inliers[inherited].T, pts_b_inliers[inherited].T)
         curr_3d = (pts4d[:3] / pts4d[3]).T
 
         z_prev = np.median(np.abs(prev_3d[:, 2]))
@@ -51,9 +50,9 @@ def process_stereo_pair(frame_a, frame_b, pts_ab_xyz=None, verbose=True):
                 print(f'[pair] z_prev={z_prev:.4f} z_curr={z_curr:.4f} scale={scale:.4f}')
 
         # Triangulating my key points
-        P1_tri = K @ np.hstack([np.eye(3), np.zeros((3, 1))])
-        P2_tri = K @ np.hstack([R, t.reshape(3, 1)])
-        pts4d = cv2.triangulatePoints(P1_tri, P2_tri, pts_a_inliers.T, pts_b_inliers.T)
+        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+                                      K @ np.hstack([R, t.reshape(3, 1)]),
+                                      pts_a_inliers.T, pts_b_inliers.T)
         inliers3d = (pts4d[:3] / pts4d[3]).T
 
         pts_ab_xyz = np.concatenate((pts_a_inliers[prev_idx[inherited]], pts_b_inliers[prev_idx[inherited]], inliers3d[prev_idx[inherited]]), axis=1)
@@ -64,9 +63,8 @@ def process_stereo_pair(frame_a, frame_b, pts_ab_xyz=None, verbose=True):
         return R, t, inliers3d[prev_idx[inherited]], pts_ab_xyz
     else:
         # Triangulating my key points
-        P1_tri = K @ np.hstack([np.eye(3), np.zeros((3, 1))])
-        P2_tri = K @ np.hstack([R, t.reshape(3, 1)])
-        pts4d = cv2.triangulatePoints(P1_tri, P2_tri, pts_a_inliers.T, pts_b_inliers.T)
+        pts4d = cv2.triangulatePoints(K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+                                      K @ np.hstack([R, t.reshape(3, 1)]), pts_a_inliers.T, pts_b_inliers.T)
         inliers3d = (pts4d[:3] / pts4d[3]).T
 
         pts_ab_xyz = np.concatenate((pts_a_inliers, pts_b_inliers, inliers3d), axis=1)

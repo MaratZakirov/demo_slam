@@ -171,6 +171,11 @@ if __name__ == '__main__':
     R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc, dense_pts_3d_bc, dense_pts_colors_bc, dense_pts_conf_bc \
         = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr, num=1, verbose=False)
 
+    print('=== correct R_ab t_ab ===')
+    M, scale = cv2.estimateAffine3D(attr['pts_3d_curr'], attr['pts_3d_prev'], force_rotation=True)
+    R_ab, t_ab = M[:, :3].T, -M[:, 3:4]
+    print(f'Correction applied scale {scale}')
+
     show_3d_match(key_pts_3d_ab, key_pts_3d_bc @ R_ab - t_ab.T)
     show_3d_match(attr['pts_3d_prev'], attr['pts_3d_curr'] @ R_ab - t_ab.T)
 

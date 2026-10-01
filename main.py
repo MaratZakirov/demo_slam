@@ -82,7 +82,7 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     # Return R, t, + key points on right camera (will be left for next stereo-pair)
     # calculated points 3d for these keypoints
     if not full_mode:
-        return R, t, pts_r_inliers, pts_3d, np.zeros((0, 3))
+        return R, t, pts_r_inliers, pts_3d, np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1))
 
     # =====================#
     # Build dense 3D model #
@@ -148,9 +148,6 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     # send dense points back to original left frame coordinate system
     dense_pts_3d = (dense_pts_3d.reshape(-1, 3) @ R1).reshape(*dense_pts_3d.shape)
 
-    if verbose:
-        save_ply_fast_numpy('myscene.ply', dense_pts_3d, dense_pts_colors)
-
     return R, t, pts_r_inliers, pts_3d, dense_pts_3d, dense_pts_colors, dense_pts_conf
 
 if __name__ == '__main__':
@@ -164,12 +161,12 @@ if __name__ == '__main__':
 
     print('=== pair_ab ===')
     R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab, dense_pts_3d_ab, dense_pts_colors_ab, dense_pts_conf_ab \
-        = process_stereo_pair(frame_a, frame_b, num=0, verbose=False)
+        = process_stereo_pair(frame_a, frame_b, num=0, verbose=0)
 
     print('=== pair_bc ===')
     attr = {}
     R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc, dense_pts_3d_bc, dense_pts_colors_bc, dense_pts_conf_bc \
-        = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr, num=1, verbose=False)
+        = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr, num=1, verbose=0)
 
     print('=== correct R_ab t_ab ===')
     M, scale = cv2.estimateAffine3D(attr['pts_3d_curr'], attr['pts_3d_prev'], force_rotation=True)
@@ -189,4 +186,6 @@ if __name__ == '__main__':
     dense_pts_3d_fused  = np.concatenate([dense_pts_3d_ab, dense_pts_3d_bc @ R_ab - t_ab.T], axis=0)
     dense_pts_colors_fused = np.concatenate([dense_pts_colors_ab, dense_pts_colors_bc], axis=0)
 
+    save_ply_fast_numpy('myscene_ab.ply', dense_pts_3d_ab.reshape(-1, 3), dense_pts_colors_ab.reshape(-1, 3))
+    save_ply_fast_numpy('myscene_bc.ply', dense_pts_3d_bc.reshape(-1, 3), dense_pts_colors_bc.reshape(-1, 3))
     save_ply_fast_numpy('fused.ply', dense_pts_3d_fused.reshape(-1, 3), dense_pts_colors_fused.reshape(-1, 3))

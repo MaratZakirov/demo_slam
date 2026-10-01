@@ -5,7 +5,7 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # Consider only Left - Right stereo-pairs
-def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True):
+def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True, full_mode=True):
     K = get_matrix_K_from_frame(frame_left)
 
     matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=pts_l_prev)
@@ -81,91 +81,66 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
 
     # Return R, t, + key points on right camera (will be left for next stereo-pair)
     # calculated points 3d for these keypoints
-    return R, t, pts_r_inliers, pts_3d
+    if not full_mode:
+        return R, t, pts_r_inliers, pts_3d, np.zeros((0, 3))
 
-    complex_stuff_which_i_do_not_need_yet = False
-    if complex_stuff_which_i_do_not_need_yet:
-        if verbose:
-            plot_flow_vectors(frame_left, pts_l_inliers, pts_r_inliers, max_arrows=700)
-            plot_matches(frame_left, frame_right, pts_l_inliers, pts_r_inliers)
-            visualize_scene_matplotlib(pts_l_inliers, pts_r_inliers, K, R, t)
+    # =====================#
+    # Build dense 3D model #
+    # =====================#
 
-        height, width = frame_left.shape[:2]
-        dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+    if verbose:
+        plot_flow_vectors(frame_left, pts_l_inliers, pts_r_inliers, max_arrows=700)
+        plot_matches(frame_left, frame_right, pts_l_inliers, pts_r_inliers)
+        visualize_scene_matplotlib(pts_l_inliers, pts_r_inliers, K, R, t)
 
-        R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
-            cameraMatrix1=K, distCoeffs1=dist_coeffs,
-            cameraMatrix2=K, distCoeffs2=dist_coeffs,
-            imageSize=(width, height), R=R, T=t.reshape(3, 1))
-        assert min(roi1) >= 0
+    height, width = frame_left.shape[:2]
+    dist_coeffs = np.zeros((5, 1), dtype=np.float32)
 
-        map1_x, map1_y = cv2.initUndistortRectifyMap(K, None, R1, P1, (width, height), cv2.CV_32FC1)
-        map2_x, map2_y = cv2.initUndistortRectifyMap(K, None, R2, P2, (width, height), cv2.CV_32FC1)
+    R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
+        cameraMatrix1=K, distCoeffs1=dist_coeffs,
+        cameraMatrix2=K, distCoeffs2=dist_coeffs,
+        imageSize=(width, height), R=R, T=t.reshape(3, 1))
+    assert min(roi1) >= 0
 
-        rectified_frame_a = cv2.remap(frame_left, map1_x, map1_y, cv2.INTER_LINEAR)
-        rectified_frame_b = cv2.remap(frame_right, map2_x, map2_y, cv2.INTER_LINEAR)
+    map1_x, map1_y = cv2.initUndistortRectifyMap(K, None, R1, P1, (width, height), cv2.CV_32FC1)
+    map2_x, map2_y = cv2.initUndistortRectifyMap(K, None, R2, P2, (width, height), cv2.CV_32FC1)
 
-        if verbose:
-            imshow('Rectified frames', np.concatenate([rectified_frame_a, rectified_frame_b], axis=1))
+    rectified_frame_l = cv2.remap(frame_left, map1_x, map1_y, cv2.INTER_LINEAR)
+    rectified_frame_r = cv2.remap(frame_right, map2_x, map2_y, cv2.INTER_LINEAR)
 
-        disp = HitNetDisparity()(rectified_frame_a, rectified_frame_b)
-        disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
-        disp_visual = cv2.normalize(disp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        imshow("Disparity Map", disp_visual)
+    if verbose:
+        imshow('Rectified frames', np.concatenate([rectified_frame_l, rectified_frame_r], axis=1))
 
-        points_3d = cv2.reprojectImageTo3D(disp, Q)
-        conf = np.ones_like(disp)
+    disp = HitNetDisparity()(rectified_frame_l, rectified_frame_r)
+    disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
+    disp_visual = cv2.normalize(disp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+    imshow("Disparity Map", disp_visual)
 
-        percentile = 4
-        lo_bound = np.percentile(points_3d[..., 2], percentile)
-        up_bound = np.percentile(points_3d[..., 2], 100 - percentile)
+    dense_pts_3d = cv2.reprojectImageTo3D(disp, Q)
+    dense_pts_conf = np.ones_like(disp)
 
-        colors = cv2.cvtColor(rectified_frame_a, cv2.COLOR_BGR2RGB)
-        mask = (disp > 0.02) & (disp < 120) & np.isfinite(points_3d[..., 2]) & \
-               (points_3d[..., 2] < up_bound) & (points_3d[..., 2] > lo_bound)
-        roi_mask = np.zeros_like(mask)
-        roi_mask[roi1[1]:roi1[1] + roi1[3], roi1[0]:roi1[0] + roi1[2]] = True
-        mask = mask & roi_mask
+    percentile = 4
+    lo_bound = np.percentile(dense_pts_3d[..., 2], percentile)
+    up_bound = np.percentile(dense_pts_3d[..., 2], 100 - percentile)
 
-        points_3d[~mask] = 0
-        colors[~mask]    = 0
-        conf[~mask]      = 0
+    dense_pts_colors = cv2.cvtColor(rectified_frame_l, cv2.COLOR_BGR2RGB)
+    mask = (disp > 0.02) & (disp < 120) & np.isfinite(dense_pts_3d[..., 2]) & \
+           (dense_pts_3d[..., 2] < up_bound) & (dense_pts_3d[..., 2] > lo_bound)
+    roi_mask = np.zeros_like(mask)
+    roi_mask[roi1[1]:roi1[1] + roi1[3], roi1[0]:roi1[0] + roi1[2]] = True
+    mask = mask & roi_mask
 
-        pts_a_rectified = cv2.undistortPoints(
-            pts_l_inliers.reshape(-1, 1, 2), K, None, R=R1, P=P1).reshape(-1, 2)
-        xy = pts_a_rectified.round().astype(int)
-        roi_pts_mask = (xy[:, 0] > roi1[0]) & (xy[:, 0] < roi1[0] + roi1[2]) & \
-                       (xy[:, 1] > roi1[1]) & (xy[:, 1] < roi1[1] + roi1[3])
-        xy = xy[roi_pts_mask]
-        pts_a_3d      = points_3d[xy[:, 1], xy[:, 0]]
-        pts_l_inliers = pts_l_inliers[roi_pts_mask]
-        pts_r_inliers = pts_r_inliers[roi_pts_mask]
-        prev_idx      = prev_idx[roi_pts_mask]
+    dense_pts_3d[~mask]     = 0
+    dense_pts_colors[~mask] = 0
+    dense_pts_conf[~mask]   = 0
 
-        valid_3d = np.abs(pts_a_3d[:, 2]) > 1e-6
-        pts_a_3d      = pts_a_3d[valid_3d]
-        pts_l_inliers = pts_l_inliers[valid_3d]
-        pts_r_inliers = pts_r_inliers[valid_3d]
-        prev_idx      = prev_idx[valid_3d]
+    # send dense points back to original left frame coordinate system
+    dense_pts_3d = (dense_pts_3d.reshape(-1, 3) @ R1).reshape(*dense_pts_3d.shape)
 
-        if verbose:
-            print(f'[pair] pts_a_3d valid={len(pts_a_3d)}  dropped_as_zero={(~valid_3d).sum()}')
+    if 0:#verbose:
+        save_ply_fast_numpy('myscene.ply', dense_pts_3d, dense_pts_colors)
 
-        pts_ab_xyz = np.concatenate((pts_l_inliers, pts_r_inliers, pts_a_3d), axis=1)
-
-        if verbose:
-            m = points_3d[..., 2] > 0
-            save_ply_fast_numpy('myscene.ply', points_3d[m], colors[m])
-
-        return {
-            'points_3d': points_3d,
-            'colors':    colors,
-            'conf':      conf,
-            'matches':   pts_ab_xyz,
-            'prev_idx':  prev_idx,
-            'R': R, 't': t, 'K': K, 'R1': R1,
-        }
-
+    return R, t, pts_r_inliers, pts_3d, dense_pts_3d, dense_pts_colors, dense_pts_conf
 
 if __name__ == '__main__':
     video_path = 'sample/kitchen.mp4'
@@ -177,11 +152,13 @@ if __name__ == '__main__':
     frame_c = get_center_crop_coords(frames[0])
 
     print('=== pair_ab ===')
-    R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab = process_stereo_pair(frame_a, frame_b)
+    R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab, dense_pts_3d_ab, dense_pts_colors_ab, dense_pts_conf_ab \
+        = process_stereo_pair(frame_a, frame_b)
 
     print('=== pair_bc ===')
     attr = {}
-    R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr)
+    R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc, dense_pts_3d_bc, dense_pts_colors_bc, dense_pts_conf_bc \
+        = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr)
 
     show_3d_match(key_pts_3d_ab, key_pts_3d_bc @ R_ab - t_ab.T)
     show_3d_match(attr['pts_3d_prev'], attr['pts_3d_curr'] @ R_ab - t_ab.T)
@@ -192,7 +169,8 @@ if __name__ == '__main__':
     # Тест на невязку
     print('Тест на невязку:', np.median(np.abs((attr['pts_3d_prev'] - (attr['pts_3d_curr'] @ R_ab - t_ab.T)))))
 
-    #print('=== fuse ===')
-    #P, C = fuse_pairs(pair_ab, pair_bc, use_icp=True, verbose=True)
+    print('=== fuse ===')
+    dense_pts_3d_fused  = np.concatenate([dense_pts_3d_ab, dense_pts_3d_bc @ R_ab - t_ab.T], axis=0)
+    dense_pts_colors_fused = np.concatenate([dense_pts_colors_ab, dense_pts_colors_bc], axis=0)
 
-    #save_ply_fast_numpy('fused.ply', P, C)
+    save_ply_fast_numpy('fused.ply', dense_pts_3d_fused.reshape(-1, 3), dense_pts_colors_fused.reshape(-1, 3))

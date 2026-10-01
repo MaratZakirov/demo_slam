@@ -5,7 +5,7 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # Consider only Left - Right stereo-pairs
-def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True, full_mode=True):
+def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True, full_mode=True, num: int = -1):
     K = get_matrix_K_from_frame(frame_left)
 
     matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=pts_l_prev)
@@ -111,10 +111,21 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     if verbose:
         imshow('Rectified frames', np.concatenate([rectified_frame_l, rectified_frame_r], axis=1))
 
-    disp = HitNetDisparity()(rectified_frame_l, rectified_frame_r)
+    try:
+        disp = np.load(f"disp_{num}.npy")
+        print("Disparity loaded from cache")
+    except FileNotFoundError:
+        disp = HitNetDisparity()(rectified_frame_l, rectified_frame_r)
+        print("Disparity calculated")
+        if num >= 0:
+            np.save(f"disp_{num}.npy", disp)
+            print("Disparity saved to cache")
+
     disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
     disp_visual = cv2.normalize(disp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-    imshow("Disparity Map", disp_visual)
+
+    if verbose:
+        imshow("Disparity Map", disp_visual)
 
     dense_pts_3d = cv2.reprojectImageTo3D(disp, Q)
     dense_pts_conf = np.ones_like(disp)
@@ -137,7 +148,7 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     # send dense points back to original left frame coordinate system
     dense_pts_3d = (dense_pts_3d.reshape(-1, 3) @ R1).reshape(*dense_pts_3d.shape)
 
-    if 0:#verbose:
+    if verbose:
         save_ply_fast_numpy('myscene.ply', dense_pts_3d, dense_pts_colors)
 
     return R, t, pts_r_inliers, pts_3d, dense_pts_3d, dense_pts_colors, dense_pts_conf
@@ -153,12 +164,12 @@ if __name__ == '__main__':
 
     print('=== pair_ab ===')
     R_ab, t_ab, key_pts_2d_ab, key_pts_3d_ab, dense_pts_3d_ab, dense_pts_colors_ab, dense_pts_conf_ab \
-        = process_stereo_pair(frame_a, frame_b)
+        = process_stereo_pair(frame_a, frame_b, num=0, verbose=False)
 
     print('=== pair_bc ===')
     attr = {}
     R_bc, t_bc, key_pts_2d_bc, key_pts_3d_bc, dense_pts_3d_bc, dense_pts_colors_bc, dense_pts_conf_bc \
-        = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr)
+        = process_stereo_pair(frame_b, frame_c, key_pts_2d_ab, key_pts_3d_ab, attributes=attr, num=1, verbose=False)
 
     show_3d_match(key_pts_3d_ab, key_pts_3d_bc @ R_ab - t_ab.T)
     show_3d_match(attr['pts_3d_prev'], attr['pts_3d_curr'] @ R_ab - t_ab.T)

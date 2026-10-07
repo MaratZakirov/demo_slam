@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 # Consider only Left - Right stereo-pairs
 def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True, full_mode=True, num: int = -1):
     M_in = len(pts_l_prev)
+    assert len(pts_3d_prev) == M_in, \
+        f"pts_l_prev and pts_3d_prev must have same length: {M_in} vs {len(pts_3d_prev)}"
     K = get_matrix_K_from_frame(frame_left)
 
     matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=pts_l_prev)

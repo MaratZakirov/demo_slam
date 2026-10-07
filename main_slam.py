@@ -34,13 +34,13 @@ if __name__ == '__main__':
         # pts_3d,              # 3D новых (в системе кадра i)
         # np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1)))
 
-        R_i, t_i, _, key_pts_2d_i, key_pts_3d_i, _, _ = process_stereo_pair(
+        R_i, t_i, _, pts_r_i, _, _, pts_3d_i = process_stereo_pair(
             frame_i, frame_i1,
             data[-1][2] if i > 0 else np.zeros((0, 2)),
             data[-1][3] if i > 0 else np.zeros((0, 3)),
             attributes=None, num=i, full_mode=False, verbose=0)[:7]
 
-        data.append([R_i, t_i, key_pts_2d_i, key_pts_3d_i])
+        data.append([R_i, t_i, pts_r_i, pts_3d_i])
 
     # Cascade correction for camera 0
     # R_0toi and t_0toi describes how to convert coordinate system 0 to i

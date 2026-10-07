@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 
 # Consider only Left - Right stereo-pairs
 def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pts_3d_prev=np.zeros((0, 3)), attributes=None, verbose=True, full_mode=True, num: int = -1):
+    M_in = len(pts_l_prev)
     K = get_matrix_K_from_frame(frame_left)
 
     matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=pts_l_prev)
@@ -37,6 +38,9 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     valid_mask    = mask_pose.ravel() == 1
     pts_l_inliers = matched_pts_l[:N][valid_mask[:N]]
     pts_r_inliers = matched_pts_r[:N][valid_mask[:N]]
+
+    combined_prev_mask = np.zeros(M_in, dtype=bool)
+    combined_prev_mask[mask_prev] = valid_mask[N:]
 
     # filtering previous data
     pts_l_prev = pts_l_prev[valid_mask[N:]]
@@ -83,7 +87,13 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     # Return R, t, + key points on right camera (will be left for next stereo-pair)
     # calculated points 3d for these keypoints
     if not full_mode:
-        return R, t, pts_r_inliers, pts_3d, np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1))
+        return (R, t,
+                pts_l_inliers,  # 2D новых на кадре i
+                pts_r_inliers,  # 2D новых на кадре i+1
+                pts_r_prev,     # ← 2D унаследованных на кадре i+1 (выжившие)
+                combined_prev_mask,  # ← какие из входа дожили
+                pts_3d,  # 3D новых (в системе кадра i)
+                np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1)))
 
     # =====================#
     # Build dense 3D model #
@@ -149,4 +159,8 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
     # send dense points back to original left frame coordinate system
     dense_pts_3d = (dense_pts_3d.reshape(-1, 3) @ R1).reshape(*dense_pts_3d.shape)
 
-    return R, t, pts_r_inliers, pts_3d, dense_pts_3d, dense_pts_colors, dense_pts_conf
+    return (R, t,
+            pts_l_inliers, pts_r_inliers,
+            pts_r_prev, combined_prev_mask,
+            pts_3d,
+            dense_pts_3d, dense_pts_colors, dense_pts_conf)

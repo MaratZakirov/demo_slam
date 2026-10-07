@@ -25,11 +25,20 @@ if __name__ == '__main__':
         frame_i  = frames[i]
         frame_i1 = frames[i + 1]
 
-        R_i, t_i, key_pts_2d_i, key_pts_3d_i = process_stereo_pair(
+        ### return signature ###
+        # R, t,
+        # pts_l_inliers,       # 2D новых на кадре i
+        # pts_r_inliers,       # 2D новых на кадре i+1
+        # pts_r_prev,          # ← 2D унаследованных на кадре i+1 (выжившие)
+        # combined_prev_mask,  # ← какие из входа дожили
+        # pts_3d,              # 3D новых (в системе кадра i)
+        # np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1)))
+
+        R_i, t_i, _, key_pts_2d_i, key_pts_3d_i, _, _ = process_stereo_pair(
             frame_i, frame_i1,
             data[-1][2] if i > 0 else np.zeros((0, 2)),
             data[-1][3] if i > 0 else np.zeros((0, 3)),
-            attributes=None, num=i, full_mode=False, verbose=0)[:4]
+            attributes=None, num=i, full_mode=False, verbose=0)[:7]
 
         data.append([R_i, t_i, key_pts_2d_i, key_pts_3d_i])
 

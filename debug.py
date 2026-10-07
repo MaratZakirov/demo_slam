@@ -219,13 +219,13 @@ def visualize_scene_matplotlib(pts_a, pts_b, K, R, t):
     # Отрисовка Первой Камеры (Зеленая пирамида)
     for line in cam_lines:
         p1, p2 = cam1_nodes[line[0]], cam1_nodes[line[1]]
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='green', linewidth=2)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color='green', linewidth=2)
     ax.scatter(cam1_nodes[0, 0], cam1_nodes[0, 1], cam1_nodes[0, 2], c='green', s=100, label='Camera 1 (Start)')
 
     # Отрисовка Второй Камеры (Красная пирамида)
     for line in cam_lines:
         p1, p2 = cam2_nodes[line[0]], cam2_nodes[line[1]]
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], c='red', linewidth=2)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]], color='red', linewidth=2)
     ax.scatter(cam2_nodes[0, 0], cam2_nodes[0, 1], cam2_nodes[0, 2], c='red', s=100, label='Camera 2 (Moved)')
 
     # Настройка осей координат по стандарту OpenCV (ось Y вниз, Z вперед)
@@ -253,4 +253,177 @@ def show_3d_match(pa_3d, pb_3d):
 
     ax.legend()
     plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
+    plt.show()
+
+def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
+                         save_path=None, box_aspect=None, debug=False):
+    """
+    Рисует все камеры и их 3D точки в системе кадра 0.
+    Каждая камера и её точки имеют один и тот же цвет.
+
+    Parameters
+    ----------
+    data : list of [R_i, t_i, pts_2d_i, pts_3d_i]
+        R_i, t_i — поза камеры i в системе кадра 0: X_0 = R_i @ X_i + t_i
+        pts_3d_i — 3D точки пары i, уже переведённые в систему кадра 0
+    K : np.ndarray | None
+        Матрица внутренних параметров 3x3. Если задана — фрустум строится
+        по реальному полю зрения камеры. Если None — абстрактная пирамида.
+    frustum_frac : float
+        Глубина фрустума как доля от габарита сцены. Default 0.03 — маленькие
+        аккуратные пирамидки, не перекрывающие друг друга.
+    point_size : int
+        Размер маркера 3D точек.
+    save_path : str | None
+        Если задан — сохраняет картинку.
+    box_aspect : tuple | None
+        Явное соотношение сторон осей 3D. Если None — (1, 1, 1).
+    debug : bool
+        Печатает диагностику по позам камер и габаритам.
+    """
+    num_cameras = len(data)
+
+    # ---- 0. Диагностика ----
+    if debug:
+        print("=" * 60)
+        print(f"[visualize_slam_scene] cameras={num_cameras}")
+        for i, (R_i, t_i, _, pts_3d) in enumerate(data):
+            c = np.asarray(t_i).ravel()
+            detR = np.linalg.det(R_i)
+            ortho = np.linalg.norm(R_i @ R_i.T - np.eye(3))
+            pts = np.asarray(pts_3d)
+            z_med = np.median(pts[:, 2]) if pts.size else float('nan')
+            print(f"  cam {i}: center=[{c[0]:+.4f}, {c[1]:+.4f}, {c[2]:+.4f}]  "
+                  f"det(R)={detR:+.4f}  |RR^T-I|={ortho:.2e}  "
+                  f"pts={len(pts)}  z_med={z_med:+.3f}")
+        print("=" * 60)
+
+    # ---- 1. Оценка габарита сцены по всем точкам ----
+    pts_all = [np.asarray(d[3]) for d in data if len(d[3]) > 0]
+    if not pts_all:
+        print("[visualize_slam_scene] Нет 3D точек для отображения")
+        return
+    pts_all = np.vstack(pts_all)
+
+    lo = np.percentile(pts_all, 2, axis=0)
+    hi = np.percentile(pts_all, 98, axis=0)
+    scene_extent = float(np.linalg.norm(hi - lo))
+    if scene_extent < 1e-9:
+        scene_extent = 1.0
+
+    if debug:
+        print(f"[visualize_slam_scene] scene_extent={scene_extent:.4f}")
+        print(f"   lo={lo},  hi={hi}")
+
+    # ---- 2. Шаблон фрустума в ЛОКАЛЬНЫХ координатах камеры ----
+    # OpenCV: X вправо, Y вниз, Z вперёд
+    d = frustum_frac * scene_extent
+
+    if K is None:
+        # Абстрактная симметричная пирамида
+        w = 0.7 * d
+        h = 0.5 * d
+        local_pts = np.array([
+            [ 0,  0, 0],
+            [-w, -h, d],
+            [ w, -h, d],
+            [ w,  h, d],
+            [-w,  h, d],
+        ], dtype=np.float64)
+    else:
+        # Реальный фрустум по K
+        K = np.asarray(K, dtype=np.float64).reshape(3, 3)
+        cx, cy = K[0, 2], K[1, 2]
+
+        # Границы image plane в пикселях (предполагаем cx,cy — центр кадра)
+        W = 2.0 * cx
+        H = 2.0 * cy
+
+        pixels = np.array([
+            [cx, cy],   # 0: центр (луч по Z)
+            [0,  0],    # 1: ЛВ
+            [W,  0],    # 2: ПВ
+            [W,  H],    # 3: ПН
+            [0,  H],    # 4: ЛН
+        ], dtype=np.float64)
+
+        # K^-1 @ [u, v, 1]^T — нормированный луч. K^-1 сам вычитает cx,cy.
+        rays = np.hstack([pixels, np.ones((5, 1))])
+        local_pts = (np.linalg.inv(K) @ rays.T).T
+
+        # Оптический центр в ноль
+        local_pts[0] = 0.0
+
+        # Углы на глубину d
+        local_pts[1:] *= (d / local_pts[1:, 2:3])
+
+        if debug:
+            print("[visualize_slam_scene] local frustum points:")
+            for j, p in enumerate(local_pts):
+                print(f"   {j}: [{p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f}]")
+
+    cam_lines = [[0, 1], [0, 2], [0, 3], [0, 4],
+                 [1, 2], [2, 3], [3, 4], [4, 1]]
+
+    # ---- 3. Палитра ----
+    cmap = plt.get_cmap('tab10', max(num_cameras, 10))
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    for i, (R_i, t_i, pts_2d, pts_3d) in enumerate(data):
+        color = cmap(i % 10)
+
+        # --- 3D точки камеры i (уже в системе 0) ---
+        pts = np.asarray(pts_3d)
+        if pts.size > 0:
+            ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
+                       c=[color], s=point_size, alpha=0.65,
+                       label=f'Cam {i}  ({len(pts)} pts)')
+
+        # --- Фрустум камеры i: X_0 = R_i @ X_local + t_i ---
+        t_vec = np.asarray(t_i).reshape(1, 3)
+        world_pts = (R_i @ local_pts.T).T + t_vec
+
+        for line in cam_lines:
+            p1, p2 = world_pts[line[0]], world_pts[line[1]]
+            ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
+                    color=color, linewidth=2, alpha=0.9)
+
+        # --- Центр камеры ---
+        c_world = np.asarray(t_i).ravel()
+        ax.scatter(c_world[0], c_world[1], c_world[2],
+                   c=[color], s=120, marker='o',
+                   edgecolors='black', linewidths=1.5, zorder=5)
+
+        # подпись камеры
+        ax.text(c_world[0], c_world[1], c_world[2], f' cam{i}',
+                color=color, fontsize=10, fontweight='bold')
+
+    # ---- 4. Оси кадра 0 для ориентации ----
+    axis_len = 0.15 * scene_extent
+    ax.quiver(0, 0, 0, axis_len, 0, 0, color='r', arrow_length_ratio=0.15)
+    ax.quiver(0, 0, 0, 0, axis_len, 0, color='g', arrow_length_ratio=0.15)
+    ax.quiver(0, 0, 0, 0, 0, axis_len, color='b', arrow_length_ratio=0.15)
+
+    # ---- 5. Оформление ----
+    ax.set_xlabel('X (Right)')
+    ax.set_ylabel('Y (Down)')
+    ax.set_zlabel('Z (Depth)')
+    ax.invert_yaxis()
+
+    if box_aspect is None:
+        box_aspect = (1.0, 1.0, 1.0)
+    ax.set_box_aspect(box_aspect)
+
+    ax.set_proj_type('ortho')
+    ax.view_init(elev=20, azim=-60)
+
+    ax.legend(loc='upper left', fontsize=8)
+    plt.title("SLAM scene in frame 0 coordinate system")
+    fig.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+
     plt.show()

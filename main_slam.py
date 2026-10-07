@@ -13,7 +13,7 @@ if __name__ == '__main__':
     frames = frames[::10]
 
     # trunkate
-    frames = frames[:4]
+    frames = frames[:5]
 
     # reduce size
     for i in range(len(frames)):
@@ -36,13 +36,13 @@ if __name__ == '__main__':
     # Cascade correction for camera 0
     # R_0toi and t_0toi describes how to convert coordinate system 0 to i
     R_0toi = np.eye(3)
-    t_0toi = np.array([0, 0, 0])
+    t_0toi = np.zeros((3, 1))
 
     # At the end
     # all 3d points in data will be in coordinate system of camera 0
     # all poses will be in terms of coordinate system of camera 0
     for i in range(len(data)):
-        data[i][3] = (R_0toi.T @ (data[i][3].T - t_0toi[:, None])).T
+        data[i][3] = (R_0toi.T @ (data[i][3].T - t_0toi)).T
 
         # make iteration
         R_i = data[i][0]
@@ -52,3 +52,6 @@ if __name__ == '__main__':
         R_0toi = R_i @ R_0toi
         t_0toi = R_i @ t_0toi + t_i
 
+    # build scene
+    K = get_matrix_K_from_frame(frames[0])
+    visualize_slam_scene(data, K=K)

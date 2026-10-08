@@ -1,13 +1,13 @@
 import numpy as np
 from scipy.optimize import least_squares
-from scipy.sparse import lil_matrix
+from scipy.sparse import csr_matrix
 from scipy.spatial.transform import Rotation
 from skimage.data import camera
 
 
 def bundle_adjust(tm, cam_poses, K,
                   loss='huber', f_scale=1.0,
-                  fix_camera0=True, verbose=1, max_nfev=6000):
+                  fix_camera0=True, verbose=1, max_nfev=10000):
     """
     Оптимизирует позы камер (кроме камеры 0) и 3D-точки треков,
     минимизируя ошибку репроекции всех наблюдений из tm.
@@ -16,27 +16,6 @@ def bundle_adjust(tm, cam_poses, K,
         X_world = R_ito0 @ X_cam + t_ito0.
     Проекция:
         X_cam = R_ito0.T @ X_world - R_ito0.T @ t_ito0, затем π(K, ·).
-
-    Parameters
-    ----------
-    tm : TrackManager
-        Треки: наблюдения в tm.obs, начальные 3D в tm.X.
-    cam_poses : list of (R_ito0, t_ito0)
-        Позы камер в системе кадра 0.
-    K : (3,3)
-    loss : 'linear' | 'huber' | 'cauchy' | 'soft_l1'
-    f_scale : float
-        Масштаб ошибки для робастной функции (в пикселях).
-    fix_camera0 : bool
-        Фиксировать позу камеры 0 (gauge freedom монокуляра).
-    verbose : int
-    max_nfev : int
-
-    Returns
-    -------
-    cam_poses_new : list of (R_i, t_i)
-    tm : TrackManager (обновлён in-place — tm.X)
-    result : OptimizeResult
     """
     # ---- 1. Собираем наблюдения ----
     obs_cam = []
@@ -95,7 +74,7 @@ def bundle_adjust(tm, cam_poses, K,
         x0[6*i+3 : 6*i+6] = np.asarray(t_i).ravel()
     x0[n_cam_params:] = X_init.ravel()
 
-    # ---- 4. Распаковка x -> (R_w2c, t_w2c) для каждой камеры и точек ----
+    # ---- 4. unpack ----
     def unpack(x):
         cams = {}
         for c in cam_opt:
@@ -104,63 +83,154 @@ def bundle_adjust(tm, cam_poses, K,
             tv = x[6*i+3 : 6*i+6]
             R = Rotation.from_rotvec(rv).as_matrix()
             cams[c] = (R, tv.reshape(3, 1))
-        # камера 0 — из начальных данных, если фиксирована
         if 0 not in cams:
             cams[0] = (np.asarray(cam_poses[0][0]),
                        np.asarray(cam_poses[0][1]).reshape(3, 1))
         pts = x[n_cam_params:].reshape(n_pts, 3)
         return cams, pts
 
-    # ---- 5. Residuals (векторизованные) ----
+    # ---- 5. Residuals + аналитический якобиан ----
     K = np.asarray(K, dtype=float)
+    n_res  = 2 * n_obs
+    n_vars = n_cam_params + 3 * n_pts
 
-    def residuals(x):
+    def residuals_and_jac(x):
         cams, pts = unpack(x)
 
-        # world->cam для каждой камеры: R_wc = R_w2c.T, t_wc = -R_wc @ t_w2c
+        # Позы в world->cam
         R_wc = np.empty((n_cams, 3, 3))
         t_wc = np.empty((n_cams, 3))
         for c in range(n_cams):
-            R_w2c, t_w2c = cams[c]
-            R_wc[c] = R_w2c.T
-            t_wc[c] = (-R_w2c.T @ np.asarray(t_w2c).reshape(3, 1)).ravel()
+            R_v, t_v = cams[c]
+            R_v = np.asarray(R_v)
+            t_v = np.asarray(t_v).reshape(3,)
+            R_wc[c] = R_v.T
+            t_wc[c] = -R_v.T @ t_v
 
-        # Проекция всех наблюдений
         R_o = R_wc[obs_cam]          # (M, 3, 3)
         t_o = t_wc[obs_cam]          # (M, 3)
         X_o = pts[obs_pt]            # (M, 3)
 
-        Xc = np.einsum('nij,nj->ni', R_o, X_o) + t_o   # (M, 3)
-        u_h = Xc @ K.T                                  # (M, 3)
+        Xc = np.einsum('mij,mj->mi', R_o, X_o) + t_o      # (M, 3)
+        u_h = Xc @ K.T                                     # (M, 3)
         u_hat = u_h[:, :2] / u_h[:, 2:3]
+        r = (u_hat - obs_uv).ravel()
 
-        return (u_hat - obs_uv).ravel()
+        # ----- Jacobian -----
+        X_, Y_, Z_ = Xc[:, 0], Xc[:, 1], Xc[:, 2]
+        # защита от деления на ~0 (точка за/на камере)
+        Z_safe = np.where(np.abs(Z_) > 1e-9, Z_, 1e-9)
+        fx, fy = K[0, 0], K[1, 1]
+        invZ  = 1.0 / Z_safe
+        invZ2 = invZ * invZ
 
-    # ---- 6. Разреженность якобиана ----
-    n_res = 2 * n_obs
-    n_vars = n_cam_params + 3 * n_pts
-    sp = lil_matrix((n_res, n_vars), dtype=int)
+        # d(π)/d(Xc): (M, 2, 3)
+        dpi = np.zeros((n_obs, 2, 3))
+        dpi[:, 0, 0] =  fx * invZ
+        dpi[:, 0, 2] = -fx * X_ * invZ2
+        dpi[:, 1, 1] =  fy * invZ
+        dpi[:, 1, 2] = -fy * Y_ * invZ2
 
-    for k in range(n_obs):
-        cam = obs_cam[k]
-        pt  = obs_pt[k]
-        if cam in cam_idx:
-            col = 6 * cam_idx[cam]
-            sp[2*k    , col:col+6] = 1
-            sp[2*k + 1, col:col+6] = 1
-        col_p = n_cam_params + 3 * pt
-        sp[2*k    , col_p:col_p+3] = 1
-        sp[2*k + 1, col_p:col_p+3] = 1
+        # d(Xc)/d(X_world) = R_wc  →  J_pt = dπ @ R_wc
+        J_pt = np.einsum('mij,mjk->mik', dpi, R_o)         # (M, 2, 3)
+
+        # d(Xc)/d(t_v) = -R_wc
+        J_t  = -J_pt
+
+        # d(Xc)/d(δ_rotvec) = [Xc]_×
+        skew = np.zeros((n_obs, 3, 3))
+        skew[:, 0, 1] = -Z_
+        skew[:, 0, 2] =  Y_
+        skew[:, 1, 0] =  Z_
+        skew[:, 1, 2] = -X_
+        skew[:, 2, 0] = -Y_
+        skew[:, 2, 1] =  X_
+        J_rot = np.einsum('mij,mjk->mik', dpi, skew)       # (M, 2, 3)
+
+        # ---- Сборка разреженной матрицы ----
+        rows_u = 2 * np.arange(n_obs)
+        rows_v = rows_u + 1
+
+        cols_p = n_cam_params + 3 * obs_pt[:, None] + np.arange(3)[None, :]
+
+        has_cam = np.array([c in cam_idx for c in obs_cam])
+        idx_c   = np.where(has_cam)[0]
+        K_c     = len(idx_c)
+
+        rows_list = []
+        cols_list = []
+        vals_list = []
+
+        # Вклад точки
+        rows_list.append(np.repeat(rows_u, 3))
+        cols_list.append(cols_p.ravel())
+        vals_list.append(J_pt[:, 0, :].ravel())
+
+        rows_list.append(np.repeat(rows_v, 3))
+        cols_list.append(cols_p.ravel())
+        vals_list.append(J_pt[:, 1, :].ravel())
+
+        # Вклад камеры
+        if K_c > 0:
+            cam_off = np.array([cam_idx[obs_cam[i]] for i in idx_c])
+            cols_c_rot = 6 * cam_off[:, None] + np.arange(3)[None, :]
+            cols_c_t   = 6 * cam_off[:, None] + 3 + np.arange(3)[None, :]
+
+            J_rot_c = J_rot[idx_c]
+            J_t_c   = J_t[idx_c]
+            rows_c_u = 2 * idx_c
+            rows_c_v = rows_c_u + 1
+
+            rows_list.append(np.repeat(rows_c_u, 3))
+            cols_list.append(cols_c_rot.ravel())
+            vals_list.append(J_rot_c[:, 0, :].ravel())
+
+            rows_list.append(np.repeat(rows_c_v, 3))
+            cols_list.append(cols_c_rot.ravel())
+            vals_list.append(J_rot_c[:, 1, :].ravel())
+
+            rows_list.append(np.repeat(rows_c_u, 3))
+            cols_list.append(cols_c_t.ravel())
+            vals_list.append(J_t_c[:, 0, :].ravel())
+
+            rows_list.append(np.repeat(rows_c_v, 3))
+            cols_list.append(cols_c_t.ravel())
+            vals_list.append(J_t_c[:, 1, :].ravel())
+
+        rows_all = np.concatenate(rows_list)
+        cols_all = np.concatenate(cols_list)
+        vals_all = np.concatenate(vals_list)
+
+        J = csr_matrix((vals_all, (rows_all, cols_all)),
+                       shape=(n_res, n_vars))
+        return r, J
+
+    # ---- 6. Кэш для r/J, чтобы scipy не считал дважды ----
+    _cache = {'x': None, 'r': None, 'J': None}
+
+    def _compute(x):
+        if _cache['x'] is None or not np.array_equal(x, _cache['x']):
+            r, J = residuals_and_jac(x)
+            _cache['x'] = x.copy()
+            _cache['r'] = r
+            _cache['J'] = J
+        return _cache['r'], _cache['J']
+
+    def fun(x):
+        return _compute(x)[0]
+
+    def jac(x):
+        return _compute(x)[1]
 
     # ---- 7. Запуск ----
-    r0 = residuals(x0)
-    rms0 = float(np.sqrt(np.mean(r0**2)))
+    r0 = residuals_and_jac(x0)[0]
+    rms0 = float(np.sqrt(np.mean(r0 ** 2)))
     if verbose:
         print(f"[BA] initial RMS = {rms0:.3f} px")
 
     result = least_squares(
-        residuals, x0,
-        jac_sparsity=sp.tocsr(),
+        fun, x0,
+        jac=jac,
         loss=loss, f_scale=f_scale,
         method='trf',
         verbose=verbose,
@@ -168,8 +238,8 @@ def bundle_adjust(tm, cam_poses, K,
         max_nfev=max_nfev,
     )
 
-    r1 = residuals(result.x)
-    rms1 = float(np.sqrt(np.mean(r1**2)))
+    r1 = residuals_and_jac(result.x)[0]
+    rms1 = float(np.sqrt(np.mean(r1 ** 2)))
     if verbose:
         print(f"[BA] final   RMS = {rms1:.3f} px   "
               f"(improvement: {rms0 - rms1:+.3f})")

@@ -11,7 +11,7 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
         f"pts_l_prev and pts_3d_prev must have same length: {M_in} vs {len(pts_3d_prev)}"
     K = get_matrix_K_from_frame(frame_left)
 
-    matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=pts_l_prev)
+    matched_pts_l, matched_pts_r, pts_r_prev, mask_prev = get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=pts_l_prev)
 
     # filtering previous data
     pts_l_prev = pts_l_prev[mask_prev]
@@ -166,3 +166,104 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
             pts_r_prev, combined_prev_mask,
             pts_3d,
             dense_pts_3d, dense_pts_colors, dense_pts_conf)
+
+# Second version w/o HitNet
+# process frames i -> i+1 where also i-th is Left and i+1 is Right
+# regardless of their real motion
+# HitNet and dense stereo map will be applied in the next stage
+def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose=None, verbose=False):
+    # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
+    # Всё состояние треков живёт в `tm`. Пара его обновляет.
+    #
+    # world_pose: (R_ito0, t_ito0), поза cam_i в системе кадра 0:
+    # Нужна для перевода 3D новых точек из системы cam_left в систему кадра 0
+    #
+    # Returns: R, t — поза cam_ip1 относительно cam_i (X_ip1 = R @ X_i + t).
+    K = get_matrix_K_from_frame(frame_i)
+
+    # ---- Активные треки с их 2D на кадре cam_left ----
+    active_ids, pts_i_inherited, X_i_inhereted = tm.active_on(cam_i)
+
+    # ---- LK: тянем их на frame_right ----
+    pts_i_new, pts_ip1_new, pts_ip1_inherited, mask_prev = \
+        get_matches_using_optical_flow(frame_i, frame_ip1,
+                                       pts_i_inherited=pts_i_inherited)
+
+    active_ids = active_ids[mask_prev]
+    pts_i_inherited = pts_i_inherited[mask_prev]
+    pts_ip1_inherited = pts_ip1_inherited[mask_prev]
+    X_i_inhereted = X_i_inhereted[mask_prev]
+
+    # ---- Essential + RANSAC по всем (новым + унаследованным) ----
+    E, mask = cv2.findEssentialMat(
+        np.concatenate([pts_i_new, pts_i_inherited], axis=0),
+        np.concatenate([pts_ip1_new, pts_ip1_inherited], axis=0),
+        cameraMatrix=K, method=cv2.RANSAC, prob=0.999, threshold=0.5)
+
+    _, R, t, mask_pose = cv2.recoverPose(
+        E,
+        np.concatenate([pts_i_new, pts_i_inherited], axis=0),
+        np.concatenate([pts_ip1_new, pts_ip1_inherited], axis=0),
+        cameraMatrix=K, mask=mask)
+
+    N = len(pts_i_new)
+    valid_mask = mask_pose.ravel() == 1
+
+    # Новые точки
+    pts_i_new = pts_i_new[:N][valid_mask[:N]]
+    pts_ip1_new = pts_ip1_new[:N][valid_mask[:N]]
+
+    # Унаследованные, дожившие до конца
+    surv = valid_mask[N:]
+    alive_ids = active_ids[surv]
+    alive_pts_i_inherited = pts_i_inherited[surv]
+    alive_pts_ip1_inherited = pts_ip1_inherited[surv]
+    alive_X_i_inherited = X_i_inhereted[surv] # 3D inherited from previous cameras which are already in world (camera 0) system
+
+    # ---- Scale correction ----
+    # essential-matrix даёт ||t||=1. Масштаб восстанавливаем, сравнивая
+    # глубину унаследованных точек в системе cam_left (из их X_world)
+    # с глубиной, которую даёт свежая триангуляция по текущей паре.
+    if len(alive_ids) >= 3:
+        z_inherited_world = np.median(np.abs(alive_X_i_inherited[:, 2]))
+        X_4d = cv2.triangulatePoints(
+            K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+            K @ np.hstack([R, t.reshape(3, 1)]),
+            alive_pts_i_inherited.T, alive_pts_ip1_inherited.T)
+        pts_3d_curr = (X_4d[:3] / X_4d[3]).T
+        z_inherited_cam_i = np.median(np.abs(pts_3d_curr[:, 2]))
+        scale = z_inherited_world / z_inherited_cam_i
+        t = t * scale
+        if verbose:
+            print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f}")
+
+    # ---- 5. Триангуляция новых точек в системе cam_left ----
+    if len(pts_i_new) > 0:
+        X_4d = cv2.triangulatePoints(
+            K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
+            K @ np.hstack([R, t.reshape(3, 1)]),
+            pts_i_new.T, pts_ip1_new.T)
+        X_i_cam_i = (X_4d[:3] / X_4d[3]).T
+    else:
+        X_i_cam_i = np.zeros((0, 3))
+
+    # ---- TrackManager ----
+    # Продлеваем выживших на cam_right
+    tm.extend(alive_ids, cam_ip1, alive_pts_ip1_inherited)
+
+    # Рождаем новых на cam_left, сразу продлеваем на cam_right
+    new_ids = tm.birth(cam_i, pts_i_new)
+    tm.extend(new_ids, cam_ip1, pts_ip1_new)
+
+    # Записываем 3D новых (переводим cam_left → world)
+    if world_pose is not None and len(new_ids) > 0:
+        R_ito0, t_ito0 = world_pose
+        t_ito0 = np.asarray(t_ito0).reshape(3, 1)
+        tm.set_X(new_ids, (R_ito0 @ X_i_cam_i.T).T + t_ito0.ravel())
+
+    # ---- Debug ----
+    if verbose:
+        plot_flow_vectors(frame_i, pts_i_new, pts_ip1_new, max_arrows=700)
+        plot_matches(frame_i, frame_ip1, pts_i_new, pts_ip1_new)
+
+    return R, t

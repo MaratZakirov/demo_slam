@@ -255,23 +255,28 @@ def show_3d_match(pa_3d, pb_3d):
     plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
     plt.show()
 
-def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
-                         save_path=None, box_aspect=None, debug=False):
+from collections import defaultdict
+
+
+def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
+                         point_size=10, save_path=None, box_aspect=None,
+                         debug=False):
     """
-    Рисует все камеры и их 3D точки в системе кадра 0.
-    Каждая камера и её точки имеют один и тот же цвет.
+    Рисует все камеры и 3D точки из TrackManager в системе кадра 0.
 
     Parameters
     ----------
-    show_data : list of [R_i, t_i, pts_2d_i, pts_3d_i]
-        R_i, t_i — поза камеры i в системе кадра 0: X_0 = R_i @ X_i + t_i
-        pts_3d_i — 3D точки пары i, уже переведённые в систему кадра 0
+    tm : TrackManager
+        Состояние треков. Точки берутся из tm.X (треки без 3D игнорируются).
+        Цвет точки определяется камерой, на которой трек родился
+        (первое наблюдение в tm.obs).
+    world_poses : list of (R_i, t_i)
+        Поза камеры i в системе кадра 0: X_0 = R_i @ X_i + t_i.
+        Длина = число камер (обычно len(frames)).
     K : np.ndarray | None
-        Матрица внутренних параметров 3x3. Если задана — фрустум строится
-        по реальному полю зрения камеры. Если None — абстрактная пирамида.
+        Матрица внутренних параметров 3x3. Если задана — фрустум реальной формы.
     frustum_frac : float
-        Глубина фрустума как доля от габарита сцены. Default 0.03 — маленькие
-        аккуратные пирамидки, не перекрывающие друг друга.
+        Глубина фрустума как доля от габарита сцены. Default 0.03.
     point_size : int
         Размер маркера 3D точек.
     save_path : str | None
@@ -279,32 +284,44 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
     box_aspect : tuple | None
         Явное соотношение сторон осей 3D. Если None — (1, 1, 1).
     debug : bool
-        Печатает диагностику по позам камер и габаритам.
+        Печатает диагностику по позам камер и трекам.
     """
-    num_cameras = len(show_data)
+    num_cameras = len(world_poses)
 
-    # ---- 0. Диагностика ----
+    # ---- 0. Группируем треки по камере рождения ----
+    by_birth = defaultdict(list)
+    for tid, observations in tm.obs.items():
+        X = tm.X.get(tid)
+        if X is None:
+            continue
+        X = np.asarray(X).ravel()
+        if not np.all(np.isfinite(X)):
+            continue
+        birth_cam = int(observations[0][0])
+        by_birth[birth_cam].append(X)
+
+    all_pts = [np.asarray(v) for v in by_birth.values()]
+    pts_all = np.vstack(all_pts) if all_pts else None
+
     if debug:
         print("=" * 60)
-        print(f"[visualize_slam_scene] cameras={num_cameras}")
-        for i, (R_i, t_i, _, pts_3d) in enumerate(show_data):
+        n_with_3d = sum(len(v) for v in by_birth.values())
+        print(f"[visualize_slam_scene] cameras={num_cameras}  "
+              f"tracks_with_3d={n_with_3d}")
+        for i, (R_i, t_i) in enumerate(world_poses):
             c = np.asarray(t_i).ravel()
             detR = np.linalg.det(R_i)
             ortho = np.linalg.norm(R_i @ R_i.T - np.eye(3))
-            pts = np.asarray(pts_3d)
-            z_med = np.median(pts[:, 2]) if pts.size else float('nan')
+            n_pts = len(by_birth.get(i, []))
             print(f"  cam {i}: center=[{c[0]:+.4f}, {c[1]:+.4f}, {c[2]:+.4f}]  "
-                  f"det(R)={detR:+.4f}  |RR^T-I|={ortho:.2e}  "
-                  f"pts={len(pts)}  z_med={z_med:+.3f}")
+                  f"det(R)={detR:+.4f}  |RR^T-I|={ortho:.2e}  birth_pts={n_pts}")
         print("=" * 60)
 
-    # ---- 1. Оценка габарита сцены по всем точкам ----
-    pts_all = [np.asarray(d[-1]) for d in show_data if len(d[-1]) > 0]
-    if not pts_all:
+    if pts_all is None:
         print("[visualize_slam_scene] Нет 3D точек для отображения")
         return
-    pts_all = np.vstack(pts_all)
 
+    # ---- 1. Габарит сцены ----
     lo = np.percentile(pts_all, 2, axis=0)
     hi = np.percentile(pts_all, 98, axis=0)
     scene_extent = float(np.linalg.norm(hi - lo))
@@ -320,7 +337,6 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
     d = frustum_frac * scene_extent
 
     if K is None:
-        # Абстрактная симметричная пирамида
         w = 0.7 * d
         h = 0.5 * d
         local_pts = np.array([
@@ -331,36 +347,21 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
             [-w,  h, d],
         ], dtype=np.float64)
     else:
-        # Реальный фрустум по K
         K = np.asarray(K, dtype=np.float64).reshape(3, 3)
         cx, cy = K[0, 2], K[1, 2]
-
-        # Границы image plane в пикселях (предполагаем cx,cy — центр кадра)
         W = 2.0 * cx
         H = 2.0 * cy
-
         pixels = np.array([
-            [cx, cy],   # 0: центр (луч по Z)
+            [cx, cy],   # 0: центр
             [0,  0],    # 1: ЛВ
             [W,  0],    # 2: ПВ
             [W,  H],    # 3: ПН
             [0,  H],    # 4: ЛН
         ], dtype=np.float64)
-
-        # K^-1 @ [u, v, 1]^T — нормированный луч. K^-1 сам вычитает cx,cy.
         rays = np.hstack([pixels, np.ones((5, 1))])
         local_pts = (np.linalg.inv(K) @ rays.T).T
-
-        # Оптический центр в ноль
         local_pts[0] = 0.0
-
-        # Углы на глубину d
         local_pts[1:] *= (d / local_pts[1:, 2:3])
-
-        if debug:
-            print("[visualize_slam_scene] local frustum points:")
-            for j, p in enumerate(local_pts):
-                print(f"   {j}: [{p[0]:+.4f}, {p[1]:+.4f}, {p[2]:+.4f}]")
 
     cam_lines = [[0, 1], [0, 2], [0, 3], [0, 4],
                  [1, 2], [2, 3], [3, 4], [4, 1]]
@@ -371,17 +372,18 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    for i, (R_i, t_i, pts_3d) in enumerate(show_data):
+    for i, (R_i, t_i) in enumerate(world_poses):
         color = cmap(i % 10)
 
-        # --- 3D точки камеры i (уже в системе 0) ---
-        pts = np.asarray(pts_3d)
-        if pts.size > 0:
+        # --- Точки, рождённые на камере i ---
+        pts = by_birth.get(i, [])
+        if len(pts) > 0:
+            pts = np.asarray(pts)
             ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
                        c=[color], s=point_size, alpha=0.65,
                        label=f'Cam {i}  ({len(pts)} pts)')
 
-        # --- Фрустум камеры i: X_0 = R_i @ X_local + t_i ---
+        # --- Фрустум: X_0 = R_i @ X_local + t_i ---
         t_vec = np.asarray(t_i).reshape(1, 3)
         world_pts = (R_i @ local_pts.T).T + t_vec
 
@@ -395,12 +397,10 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
         ax.scatter(c_world[0], c_world[1], c_world[2],
                    c=[color], s=120, marker='o',
                    edgecolors='black', linewidths=1.5, zorder=5)
-
-        # подпись камеры
         ax.text(c_world[0], c_world[1], c_world[2], f' cam{i}',
                 color=color, fontsize=10, fontweight='bold')
 
-    # ---- 4. Оси кадра 0 для ориентации ----
+    # ---- 4. Оси кадра 0 ----
     axis_len = 0.15 * scene_extent
     ax.quiver(0, 0, 0, axis_len, 0, 0, color='r', arrow_length_ratio=0.15)
     ax.quiver(0, 0, 0, 0, axis_len, 0, color='g', arrow_length_ratio=0.15)
@@ -410,14 +410,16 @@ def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
     ax.set_xlabel('X (Right)')
     ax.set_ylabel('Y (Down)')
     ax.set_zlabel('Z (Depth)')
-    ax.invert_yaxis()
 
     center = 0.5 * (lo + hi)
     half = 0.5 * float(np.max(hi - lo)) * 1.05
+    if half < 1e-9:
+        half = 1.0
     ax.set_xlim(center[0] - half, center[0] + half)
     ax.set_ylim(center[1] - half, center[1] + half)
     ax.set_zlim(center[2] - half, center[2] + half)
 
+    ax.invert_yaxis()
     ax.set_box_aspect((1.0, 1.0, 1.0))
     ax.set_proj_type('ortho')
     ax.view_init(elev=20, azim=-60)

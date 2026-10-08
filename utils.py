@@ -44,28 +44,28 @@ def load_frames(video_path: str, quiet=True) -> list:
 
     return frames
 
-def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), max_features=1000):
+def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.zeros((0, 2)), max_features=1000):
     """
     Находит сопоставленные точки между двумя кадрами с использованием
     локального оптического потока Лукаса-Канаде вместо глобального SIFT.
 
     Returns:
-        matched_pts_l (np.ndarray): Координаты точек на первом кадре (K x 2)
-        matched_pts_r (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
+        pts_i   (np.ndarray): Координаты точек на первом кадре (K x 2)
+        pts_ip1 (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
     """
     gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
     gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
 
     # 2. Находим надежные углы ТОЛЬКО на первом кадре
-    pts_l_raw = cv2.goodFeaturesToTrack(
+    pts_i_raw = cv2.goodFeaturesToTrack(
         gray_left,
         maxCorners=max_features,
         qualityLevel=0.01,  # Порог качества (чем выше, тем строже отбор углов)
         minDistance=10  # Минимальное расстояние в пикселях между точками
     )
 
-    if pts_l_raw is None:
-        pts_l_raw = np.empty((0, 1, 2), dtype=np.float32)
+    if pts_i_raw is None:
+        pts_i_raw = np.empty((0, 1, 2), dtype=np.float32)
 
     # Настраиваем параметры локального поиска Лукаса-Канаде
     lk_params = dict(
@@ -74,23 +74,23 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_l_prev=np.zeros(
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
     )
 
-    N = len(pts_l_raw)
-    pts_l_raw = np.concatenate([pts_l_raw, pts_l_prev.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
+    N = len(pts_i_raw)
+    pts_i_raw = np.concatenate([pts_i_raw, pts_i_inherited.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
 
     # Вычисляем оптический поток (смещение точек на кадр B)
     # status == 1 для точек, которые успешно нашлись в локальном окне на кадре B
-    pts_r_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_left, gray_right, pts_l_raw, None, **lk_params)
+    pts_ip1_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_left, gray_right, pts_i_raw, None, **lk_params)
 
     # Фильтруем точки с помощью NumPy-маски status
     valid_mask = (status == 1).reshape(-1)
-    matched_pts_l = pts_l_raw[:N][valid_mask[:N]].reshape(-1, 2)
-    matched_pts_r = pts_r_raw[:N][valid_mask[:N]].reshape(-1, 2)
+    pts_i = pts_i_raw[:N][valid_mask[:N]].reshape(-1, 2)
+    pts_ip1 = pts_ip1_raw[:N][valid_mask[:N]].reshape(-1, 2)
 
-    pts_r_prev = pts_r_raw[N:].reshape(-1, 2)
-    assert len(pts_r_prev) == len(pts_l_prev)
+    pts_ip1_inhereted = pts_ip1_raw[N:].reshape(-1, 2)
+    assert len(pts_ip1_inhereted) == len(pts_i_inherited)
 
     # return artifacts plus residual mask of validness for previois matches
-    return matched_pts_l, matched_pts_r, pts_r_prev, valid_mask[N:]
+    return pts_i, pts_ip1, pts_ip1_inhereted, valid_mask[N:]
 
 def decompose_2d_vector_field(xy: np.ndarray, uv: np.ndarray):
     xy_centered = xy - np.mean(xy, axis=0)

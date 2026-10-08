@@ -37,5 +37,11 @@ if __name__ == '__main__':
 
         print(f"[iter {i}] {tm.stats(i)}")
 
+    # last camera
+    cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
+
     K = get_matrix_K_from_frame(frames[0])
+
+    cam_poses, tm, result = bundle_adjust(tm, cam_poses, K)
+
     visualize_slam_scene(tm, cam_poses, K=K)

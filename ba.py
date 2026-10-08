@@ -2,23 +2,26 @@ import numpy as np
 from scipy.optimize import least_squares
 from scipy.sparse import lil_matrix
 from scipy.spatial.transform import Rotation
+from skimage.data import camera
 
 
-def bundle_adjust(tm, world_poses, K,
+def bundle_adjust(tm, cam_poses, K,
                   loss='huber', f_scale=1.0,
-                  fix_camera0=True, verbose=1, max_nfev=100):
+                  fix_camera0=True, verbose=1, max_nfev=6000):
     """
     Оптимизирует позы камер (кроме камеры 0) и 3D-точки треков,
     минимизируя ошибку репроекции всех наблюдений из tm.
 
-    Конвенция позы: X_world = R_i @ X_cam + t_i.
-    Проекция: X_cam = R_i.T @ X_world - R_i.T @ t_i, затем π(K, ·).
+    Конвенция позы:
+        X_world = R_ito0 @ X_cam + t_ito0.
+    Проекция:
+        X_cam = R_ito0.T @ X_world - R_ito0.T @ t_ito0, затем π(K, ·).
 
     Parameters
     ----------
     tm : TrackManager
         Треки: наблюдения в tm.obs, начальные 3D в tm.X.
-    world_poses : list of (R_i, t_i)
+    cam_poses : list of (R_ito0, t_ito0)
         Позы камер в системе кадра 0.
     K : (3,3)
     loss : 'linear' | 'huber' | 'cauchy' | 'soft_l1'
@@ -31,7 +34,7 @@ def bundle_adjust(tm, world_poses, K,
 
     Returns
     -------
-    world_poses_new : list of (R_i, t_i)
+    cam_poses_new : list of (R_i, t_i)
     tm : TrackManager (обновлён in-place — tm.X)
     result : OptimizeResult
     """
@@ -65,11 +68,11 @@ def bundle_adjust(tm, world_poses, K,
 
     n_obs  = len(obs_cam)
     n_pts  = len(X_init)
-    n_cams = len(world_poses)
+    n_cams = len(cam_poses)
 
     if n_obs == 0 or n_pts == 0:
         print("[BA] Нет наблюдений или точек. Ничего не делаем.")
-        return world_poses, tm, None
+        return cam_poses, tm, None
 
     if verbose:
         print(f"[BA] cams={n_cams}  points={n_pts}  obs={n_obs}  "
@@ -87,7 +90,7 @@ def bundle_adjust(tm, world_poses, K,
     x0 = np.zeros(n_cam_params + 3 * n_pts)
     for c in cam_opt:
         i = cam_idx[c]
-        R_i, t_i = world_poses[c]
+        R_i, t_i = cam_poses[c]
         x0[6*i : 6*i+3] = Rotation.from_matrix(R_i).as_rotvec()
         x0[6*i+3 : 6*i+6] = np.asarray(t_i).ravel()
     x0[n_cam_params:] = X_init.ravel()
@@ -103,8 +106,8 @@ def bundle_adjust(tm, world_poses, K,
             cams[c] = (R, tv.reshape(3, 1))
         # камера 0 — из начальных данных, если фиксирована
         if 0 not in cams:
-            cams[0] = (np.asarray(world_poses[0][0]),
-                       np.asarray(world_poses[0][1]).reshape(3, 1))
+            cams[0] = (np.asarray(cam_poses[0][0]),
+                       np.asarray(cam_poses[0][1]).reshape(3, 1))
         pts = x[n_cam_params:].reshape(n_pts, 3)
         return cams, pts
 
@@ -114,13 +117,13 @@ def bundle_adjust(tm, world_poses, K,
     def residuals(x):
         cams, pts = unpack(x)
 
-        # world->cam для каждой камеры: R_wc = R_w2c.T, t_wc = -R.T @ t
+        # world->cam для каждой камеры: R_wc = R_w2c.T, t_wc = -R_wc @ t_w2c
         R_wc = np.empty((n_cams, 3, 3))
         t_wc = np.empty((n_cams, 3))
         for c in range(n_cams):
             R_w2c, t_w2c = cams[c]
-            R_wc[c] = R_w2c
-            t_wc[c] = np.asarray(t_w2c).ravel()
+            R_wc[c] = R_w2c.T
+            t_wc[c] = (-R_w2c.T @ np.asarray(t_w2c).reshape(3, 1)).ravel()
 
         # Проекция всех наблюдений
         R_o = R_wc[obs_cam]          # (M, 3, 3)
@@ -174,13 +177,13 @@ def bundle_adjust(tm, world_poses, K,
     # ---- 8. Запись результата обратно ----
     cams_opt_dict, pts_opt = unpack(result.x)
 
-    world_poses_new = []
+    cam_poses_new = []
     for c in range(n_cams):
         R, t = cams_opt_dict[c]
-        world_poses_new.append((R, np.asarray(t).reshape(3, 1)))
+        cam_poses_new.append((R, np.asarray(t).reshape(3, 1)))
 
     idx_to_tid = {v: k for k, v in tid_to_idx.items()}
     for idx, tid in idx_to_tid.items():
         tm.X[int(tid)] = pts_opt[idx]
 
-    return world_poses_new, tm, result
+    return cam_poses_new, tm, result

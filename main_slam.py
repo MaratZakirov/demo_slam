@@ -33,14 +33,16 @@ if __name__ == '__main__':
         # combined_prev_mask,  # ← какие из входа дожили
         # pts_3d,              # 3D новых (в системе кадра i)
         # np.zeros((0, 0, 3)), np.zeros((0, 0, 3)), np.zeros((0, 0, 1)))
+        pts_r_i_1  = data[-1][3] if i > 0 else np.zeros((0, 2))
+        pts_3d_i_1 = data[-1][4] if i > 0 else np.zeros((0, 3))
 
-        R_i, t_i, _, pts_r_i, _, _, pts_3d_i = process_stereo_pair(
+        R_i, t_i, pts_l_i, pts_r_i, pts_r_i_1_surv, combined_prev_mask, pts_3d_i = process_stereo_pair(
             frame_i, frame_i1,
-            data[-1][2] if i > 0 else np.zeros((0, 2)),
-            data[-1][3] if i > 0 else np.zeros((0, 3)),
+            pts_r_i_1,
+            pts_3d_i_1,
             attributes=None, num=i, full_mode=False, verbose=0)[:7]
 
-        data.append([R_i, t_i, pts_r_i, pts_3d_i])
+        data.append([R_i, t_i, pts_l_i, pts_r_i, pts_3d_i])
 
     # Cascade correction for camera 0
     # R_0toi and t_0toi describes how to convert coordinate system 0 to i
@@ -51,7 +53,7 @@ if __name__ == '__main__':
     # all 3d points in data will be in coordinate system of camera 0
     # all poses will be in terms of coordinate system of camera 0
     for i in range(len(data)):
-        data[i][3] = (R_0toi.T @ (data[i][3].T - t_0toi)).T
+        data[i][4] = (R_0toi.T @ (data[i][4].T - t_0toi)).T
 
         # make iteration
         R_i = data[i][0]
@@ -63,4 +65,4 @@ if __name__ == '__main__':
 
     # build scene
     K = get_matrix_K_from_frame(frames[0])
-    visualize_slam_scene(data, K=K)
+    visualize_slam_scene([(e[0], e[1], e[-1]) for e in data], K=K)

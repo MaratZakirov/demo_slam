@@ -255,7 +255,7 @@ def show_3d_match(pa_3d, pb_3d):
     plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
     plt.show()
 
-def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
+def visualize_slam_scene(show_data, K=None, frustum_frac=0.03, point_size=10,
                          save_path=None, box_aspect=None, debug=False):
     """
     Рисует все камеры и их 3D точки в системе кадра 0.
@@ -263,7 +263,7 @@ def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
 
     Parameters
     ----------
-    data : list of [R_i, t_i, pts_2d_i, pts_3d_i]
+    show_data : list of [R_i, t_i, pts_2d_i, pts_3d_i]
         R_i, t_i — поза камеры i в системе кадра 0: X_0 = R_i @ X_i + t_i
         pts_3d_i — 3D точки пары i, уже переведённые в систему кадра 0
     K : np.ndarray | None
@@ -281,13 +281,13 @@ def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
     debug : bool
         Печатает диагностику по позам камер и габаритам.
     """
-    num_cameras = len(data)
+    num_cameras = len(show_data)
 
     # ---- 0. Диагностика ----
     if debug:
         print("=" * 60)
         print(f"[visualize_slam_scene] cameras={num_cameras}")
-        for i, (R_i, t_i, _, pts_3d) in enumerate(data):
+        for i, (R_i, t_i, _, pts_3d) in enumerate(show_data):
             c = np.asarray(t_i).ravel()
             detR = np.linalg.det(R_i)
             ortho = np.linalg.norm(R_i @ R_i.T - np.eye(3))
@@ -299,7 +299,7 @@ def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
         print("=" * 60)
 
     # ---- 1. Оценка габарита сцены по всем точкам ----
-    pts_all = [np.asarray(d[3]) for d in data if len(d[3]) > 0]
+    pts_all = [np.asarray(d[-1]) for d in show_data if len(d[-1]) > 0]
     if not pts_all:
         print("[visualize_slam_scene] Нет 3D точек для отображения")
         return
@@ -371,7 +371,7 @@ def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    for i, (R_i, t_i, pts_2d, pts_3d) in enumerate(data):
+    for i, (R_i, t_i, pts_3d) in enumerate(show_data):
         color = cmap(i % 10)
 
         # --- 3D точки камеры i (уже в системе 0) ---
@@ -412,10 +412,13 @@ def visualize_slam_scene(data, K=None, frustum_frac=0.03, point_size=10,
     ax.set_zlabel('Z (Depth)')
     ax.invert_yaxis()
 
-    if box_aspect is None:
-        box_aspect = (1.0, 1.0, 1.0)
-    ax.set_box_aspect(box_aspect)
+    center = 0.5 * (lo + hi)
+    half = 0.5 * float(np.max(hi - lo)) * 1.05
+    ax.set_xlim(center[0] - half, center[0] + half)
+    ax.set_ylim(center[1] - half, center[1] + half)
+    ax.set_zlim(center[2] - half, center[2] + half)
 
+    ax.set_box_aspect((1.0, 1.0, 1.0))
     ax.set_proj_type('ortho')
     ax.view_init(elev=20, azim=-60)
 

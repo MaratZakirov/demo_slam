@@ -171,7 +171,7 @@ def process_stereo_pair(frame_left, frame_right, pts_l_prev=np.zeros((0, 2)), pt
 # process frames i -> i+1 where also i-th is Left and i+1 is Right
 # regardless of their real motion
 # HitNet and dense stereo map will be applied in the next stage
-def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose=None, verbose=False):
+def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, verbose=False):
     # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
     # Всё состояние треков живёт в `tm`. Пара его обновляет.
     #
@@ -225,17 +225,25 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose=Non
     # глубину унаследованных точек в системе cam_left (из их X_world)
     # с глубиной, которую даёт свежая триангуляция по текущей паре.
     if len(alive_ids) >= 3:
+        R_ito0, t_ito0 = world_pose
         z_inherited_world = np.median(np.abs(alive_X_i_inherited[:, 2]))
         X_4d = cv2.triangulatePoints(
             K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
             K @ np.hstack([R, t.reshape(3, 1)]),
             alive_pts_i_inherited.T, alive_pts_ip1_inherited.T)
-        pts_3d_curr = (X_4d[:3] / X_4d[3]).T
-        z_inherited_cam_i = np.median(np.abs(pts_3d_curr[:, 2]))
+        X_i_inherited_cam_i = (X_4d[:3] / X_4d[3]).T
+
+        # convert retriangulated inherited points in world (camera 0) system
+        X_i_inherited_cam_i = (R_ito0 @ X_i_inherited_cam_i.T + t_ito0).T   # 4.35
+
+        z_inherited_cam_i = np.median(np.abs(X_i_inherited_cam_i[:, 2]))
         scale = z_inherited_world / z_inherited_cam_i
         t = t * scale
-        if verbose:
-            print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f}")
+
+        median_shift = np.median(np.linalg.norm(np.abs(X_i_inherited_cam_i - alive_X_i_inherited), axis=1))
+
+        if 1:#verbose:
+            print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f} median_shift={median_shift:.3f}")
 
     # ---- 5. Триангуляция новых точек в системе cam_left ----
     if len(pts_i_new) > 0:
@@ -256,7 +264,7 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose=Non
     tm.extend(new_ids, cam_ip1, pts_ip1_new)
 
     # Записываем 3D новых (переводим cam_left → world)
-    if world_pose is not None and len(new_ids) > 0:
+    if len(new_ids) > 0:
         R_ito0, t_ito0 = world_pose
         t_ito0 = np.asarray(t_ito0).reshape(3, 1)
         tm.set_X(new_ids, (R_ito0 @ X_i_cam_i.T).T + t_ito0.ravel())

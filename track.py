@@ -57,11 +57,19 @@ class TrackManager:
         ) if X else np.zeros((0, 3))
         return tids, pts2d, X
 
-    def stats(self):
+    def stats(self, cam_i=None):
         n = len(self.obs)
         lengths = [len(v) for v in self.obs.values()]
         if not lengths:
             return "tm: empty"
+
+        tids_on_cam_i = 0
+        for tid in self.obs:
+            for cam_j, u, v in self.obs[tid]:
+                if cam_j == cam_i:
+                    tids_on_cam_i += 1
+                    break
+
         return (f"tm: tracks={n}  "
                 f"obs/track min={min(lengths)} med={int(np.median(lengths))} max={max(lengths)}  "
-                f"with3d={len(self.X)}")
+                f"with3d={len(self.X)} tids_on_cam_i={tids_on_cam_i} ")

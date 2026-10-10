@@ -44,4 +44,5 @@ if __name__ == '__main__':
 
     cam_poses, tm, result = bundle_adjust(tm, cam_poses, K)
 
-    visualize_slam_scene(tm, cam_poses, K=K)
+    visualize_slam_scene(tm, cam_poses, K=K, color_mode='pixel')
+    visualize_slam_scene(tm, cam_poses, K=K, color_mode='camera')

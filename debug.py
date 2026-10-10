@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+from collections import defaultdict
 
 def imshow(label: str, image: np.ndarray, use_cv=False):
     if use_cv:
@@ -255,41 +256,39 @@ def show_3d_match(pa_3d, pb_3d):
     plt.title("Отладка геометрии SLAM: Взаимное положение камер и 3D-точек")
     plt.show()
 
-from collections import defaultdict
-
-
 def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
                          point_size=10, save_path=None, box_aspect=None,
-                         debug=False):
+                         debug=False, color_mode='camera'):
     """
     Рисует все камеры и 3D точки из TrackManager в системе кадра 0.
 
     Parameters
     ----------
     tm : TrackManager
-        Состояние треков. Точки берутся из tm.X (треки без 3D игнорируются).
-        Цвет точки определяется камерой, на которой трек родился
-        (первое наблюдение в tm.obs).
+        Состояние треков. Точки берутся из tm.X.
     world_poses : list of (R_i, t_i)
         Поза камеры i в системе кадра 0: X_0 = R_i @ X_i + t_i.
-        Длина = число камер (обычно len(frames)).
     K : np.ndarray | None
-        Матрица внутренних параметров 3x3. Если задана — фрустум реальной формы.
+        Матрица внутренних параметров 3x3.
     frustum_frac : float
-        Глубина фрустума как доля от габарита сцены. Default 0.03.
+        Глубина фрустума как доля от габарита сцены.
     point_size : int
         Размер маркера 3D точек.
     save_path : str | None
         Если задан — сохраняет картинку.
     box_aspect : tuple | None
-        Явное соотношение сторон осей 3D. Если None — (1, 1, 1).
+        Соотношение сторон осей 3D. Если None — (1, 1, 1).
     debug : bool
-        Печатает диагностику по позам камер и трекам.
+        Печатает диагностику.
+    color_mode : {'camera', 'pixel'}
+        'camera' — точки раскрашены по камере рождения (как было).
+        'pixel'  — точки раскрашены по RGB-цвету пикселя в момент рождения.
     """
     num_cameras = len(world_poses)
 
-    # ---- 0. Группируем треки по камере рождения ----
-    by_birth = defaultdict(list)
+    # ---- 0. Собираем все треки с 3D ----
+    tids_all = []
+    pts_all_list = []
     for tid, observations in tm.obs.items():
         X = tm.X.get(tid)
         if X is None:
@@ -297,29 +296,27 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
         X = np.asarray(X).ravel()
         if not np.all(np.isfinite(X)):
             continue
-        birth_cam = int(observations[0][0])
-        by_birth[birth_cam].append(X)
+        tids_all.append(int(tid))
+        pts_all_list.append(X)
 
-    all_pts = [np.asarray(v) for v in by_birth.values()]
-    pts_all = np.vstack(all_pts) if all_pts else None
+    if not pts_all_list:
+        print("[visualize_slam_scene] Нет 3D точек для отображения")
+        return
+
+    tids_all = np.asarray(tids_all, dtype=int)
+    pts_all  = np.asarray(pts_all_list, dtype=float)
 
     if debug:
         print("=" * 60)
-        n_with_3d = sum(len(v) for v in by_birth.values())
         print(f"[visualize_slam_scene] cameras={num_cameras}  "
-              f"tracks_with_3d={n_with_3d}")
+              f"tracks_with_3d={len(tids_all)}  mode={color_mode}")
         for i, (R_i, t_i) in enumerate(world_poses):
             c = np.asarray(t_i).ravel()
             detR = np.linalg.det(R_i)
             ortho = np.linalg.norm(R_i @ R_i.T - np.eye(3))
-            n_pts = len(by_birth.get(i, []))
             print(f"  cam {i}: center=[{c[0]:+.4f}, {c[1]:+.4f}, {c[2]:+.4f}]  "
-                  f"det(R)={detR:+.4f}  |RR^T-I|={ortho:.2e}  birth_pts={n_pts}")
+                  f"det(R)={detR:+.4f}  |RR^T-I|={ortho:.2e}")
         print("=" * 60)
-
-    if pts_all is None:
-        print("[visualize_slam_scene] Нет 3D точек для отображения")
-        return
 
     # ---- 1. Габарит сцены ----
     lo = np.percentile(pts_all, 2, axis=0)
@@ -328,12 +325,7 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
     if scene_extent < 1e-9:
         scene_extent = 1.0
 
-    if debug:
-        print(f"[visualize_slam_scene] scene_extent={scene_extent:.4f}")
-        print(f"   lo={lo},  hi={hi}")
-
-    # ---- 2. Шаблон фрустума в ЛОКАЛЬНЫХ координатах камеры ----
-    # OpenCV: X вправо, Y вниз, Z вперёд
+    # ---- 2. Шаблон фрустума в локальных координатах камеры ----
     d = frustum_frac * scene_extent
 
     if K is None:
@@ -352,11 +344,11 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
         W = 2.0 * cx
         H = 2.0 * cy
         pixels = np.array([
-            [cx, cy],   # 0: центр
-            [0,  0],    # 1: ЛВ
-            [W,  0],    # 2: ПВ
-            [W,  H],    # 3: ПН
-            [0,  H],    # 4: ЛН
+            [cx, cy],
+            [0,  0],
+            [W,  0],
+            [W,  H],
+            [0,  H],
         ], dtype=np.float64)
         rays = np.hstack([pixels, np.ones((5, 1))])
         local_pts = (np.linalg.inv(K) @ rays.T).T
@@ -366,24 +358,40 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
     cam_lines = [[0, 1], [0, 2], [0, 3], [0, 4],
                  [1, 2], [2, 3], [3, 4], [4, 1]]
 
-    # ---- 3. Палитра ----
     cmap = plt.get_cmap('tab10', max(num_cameras, 10))
 
     fig = plt.figure(figsize=(12, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    for i, (R_i, t_i) in enumerate(world_poses):
-        color = cmap(i % 10)
+    # ---- 3. Точки ----
+    if color_mode == 'pixel':
+        # Индивидуальные цвета из tm.C (uint8 RGB → float [0,1])
+        colors_rgb = np.full((len(tids_all), 3), 0.5, dtype=float)
+        for k, tid in enumerate(tids_all):
+            c = tm.C.get(int(tid))
+            if c is not None:
+                colors_rgb[k] = np.asarray(c, dtype=float) / 255.0
+        ax.scatter(pts_all[:, 0], pts_all[:, 1], pts_all[:, 2],
+                   c=colors_rgb, s=point_size, alpha=0.85,
+                   label=f'{len(tids_all)} pts (RGB)')
 
-        # --- Точки, рождённые на камере i ---
-        pts = by_birth.get(i, [])
-        if len(pts) > 0:
+    elif color_mode == 'camera':
+        by_birth = defaultdict(list)
+        for tid, X in zip(tids_all, pts_all):
+            birth_cam = int(tm.obs[int(tid)][0][0])
+            by_birth[birth_cam].append(X)
+        for i, pts in by_birth.items():
             pts = np.asarray(pts)
             ax.scatter(pts[:, 0], pts[:, 1], pts[:, 2],
-                       c=[color], s=point_size, alpha=0.65,
+                       c=[cmap(i % 10)], s=point_size, alpha=0.65,
                        label=f'Cam {i}  ({len(pts)} pts)')
 
-        # --- Фрустум: X_0 = R_i @ X_local + t_i ---
+    else:
+        raise ValueError(f"color_mode must be 'camera' or 'pixel', got {color_mode!r}")
+
+    # ---- 4. Фрустумы камер ----
+    for i, (R_i, t_i) in enumerate(world_poses):
+        color = cmap(i % 10)
         t_vec = np.asarray(t_i).reshape(1, 3)
         world_pts = (R_i @ local_pts.T).T + t_vec
 
@@ -392,7 +400,6 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
             ax.plot([p1[0], p2[0]], [p1[1], p2[1]], [p1[2], p2[2]],
                     color=color, linewidth=2, alpha=0.9)
 
-        # --- Центр камеры ---
         c_world = np.asarray(t_i).ravel()
         ax.scatter(c_world[0], c_world[1], c_world[2],
                    c=[color], s=120, marker='o',
@@ -400,13 +407,13 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
         ax.text(c_world[0], c_world[1], c_world[2], f' cam{i}',
                 color=color, fontsize=10, fontweight='bold')
 
-    # ---- 4. Оси кадра 0 ----
+    # ---- 5. Оси кадра 0 ----
     axis_len = 0.15 * scene_extent
     ax.quiver(0, 0, 0, axis_len, 0, 0, color='r', arrow_length_ratio=0.15)
     ax.quiver(0, 0, 0, 0, axis_len, 0, color='g', arrow_length_ratio=0.15)
     ax.quiver(0, 0, 0, 0, 0, axis_len, color='b', arrow_length_ratio=0.15)
 
-    # ---- 5. Оформление ----
+    # ---- 6. Оформление ----
     ax.set_xlabel('X (Right)')
     ax.set_ylabel('Y (Down)')
     ax.set_zlabel('Z (Depth)')
@@ -420,12 +427,14 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
     ax.set_zlim(center[2] - half, center[2] + half)
 
     ax.invert_yaxis()
-    ax.set_box_aspect((1.0, 1.0, 1.0))
+    if box_aspect is None:
+        box_aspect = (1.0, 1.0, 1.0)
+    ax.set_box_aspect(box_aspect)
     ax.set_proj_type('ortho')
     ax.view_init(elev=20, azim=-60)
 
     ax.legend(loc='upper left', fontsize=8)
-    plt.title("SLAM scene in frame 0 coordinate system")
+    plt.title(f"SLAM scene in frame 0 (color={color_mode})")
     fig.tight_layout()
 
     if save_path:

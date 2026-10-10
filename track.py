@@ -6,18 +6,29 @@ class TrackManager:
     def __init__(self):
         self.obs = {}            # tid -> list[(cam, u, v)]
         self.X   = {}            # tid -> np.ndarray(3,) in world (frame 0)
+        self.C   = {}
         self.next_id = 0
 
     # Создаёт новые треки с наблюдением на кадре `cam`
-    def birth(self, cam, pts_2d):
+    def birth(self, cam, pts_2d, colors=None):          # >>> +colors
         assert np.isfinite(pts_2d.sum()), 'Not finite!'
         ids = []
-        for u, v in pts_2d:
+        for i, (u, v) in enumerate(pts_2d):
             tid = self.next_id
             self.next_id += 1
             self.obs[tid] = [(int(cam), float(u), float(v))]
+            if colors is not None:                       # >>>
+                self.C[tid] = np.asarray(colors[i], dtype=np.uint8)
             ids.append(tid)
         return np.asarray(ids, dtype=int)
+
+    def get_C(self, tids):                               # >>> новый метод
+        out = np.full((len(tids), 3), 128, dtype=np.uint8)
+        for k, tid in enumerate(tids):
+            c = self.C.get(int(tid))
+            if c is not None:
+                out[k] = c
+        return out
 
     # Добавляет наблюдение существующим трекам.
     def extend(self, tids, cam, pts_2d):
@@ -50,7 +61,7 @@ class TrackManager:
                 X.append(self.X.get(tid))
 
         tids = np.asarray(tids, dtype=int)
-        pts2d = np.asarray(pts2d, dtype=float) if pts2d else np.zeros((0, 2))
+        pts2d = np.asarray(pts2d, dtype=np.float32) if pts2d else np.zeros((0, 2))
         X = np.asarray(
             [x if x is not None else [np.nan, np.nan, np.nan] for x in X],
             dtype=float

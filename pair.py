@@ -259,8 +259,16 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, ve
     # Продлеваем выживших на cam_right
     tm.extend(alive_ids, cam_ip1, alive_pts_ip1_inherited)
 
+    colors = None
+    if len(pts_i_new) > 0:
+        h, w = frame_i.shape[:2]
+        colors = frame_i[
+            pts_i_new[:, 1].round().astype(int).clip(0, h - 1),
+            pts_i_new[:, 0].round().astype(int).clip(0, w - 1), ::-1
+        ].copy()
+
     # Рождаем новых на cam_left, сразу продлеваем на cam_right
-    new_ids = tm.birth(cam_i, pts_i_new)
+    new_ids = tm.birth(cam_i, pts_i_new, colors=colors)
     tm.extend(new_ids, cam_ip1, pts_ip1_new)
 
     # Записываем 3D новых (переводим cam_left → world)

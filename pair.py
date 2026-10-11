@@ -242,7 +242,7 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, ve
 
         median_shift = np.median(np.linalg.norm(np.abs(X_i_inherited_cam_i - alive_X_i_inherited), axis=1))
 
-        if 1:#verbose:
+        if verbose:
             print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f} median_shift={median_shift:.3f}")
 
     # ---- 5. Триангуляция новых точек в системе cam_left ----
@@ -283,3 +283,59 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, ve
         plot_matches(frame_i, frame_ip1, pts_i_new, pts_ip1_new)
 
     return R, t
+
+def process_dense_pair(frame_l, frame_r, pose_l, pose_r, K,
+                       pair_id=(0, 0), verbose=False):
+    """
+    Плотное стерео для пары (left, right) с известными позами в world (frame 0).
+    Возвращает (X_world, colors_rgb): (N, 3) float64 в world, (N, 3) uint8 RGB.
+    """
+    R_l, t_l = pose_l
+    R_r, t_r = pose_r
+
+    R_lr, t_lr = relative_pose(pose_l, pose_r)   # X_r = R_lr @ X_l + t_lr
+    assert t_lr[0, 0] < 0, f"pair {pair_id} is not left-right"
+
+    height, width = frame_l.shape[:2]
+    dist_coeffs = np.zeros((5, 1), dtype=np.float32)
+
+    R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
+        cameraMatrix1=K, distCoeffs1=dist_coeffs,
+        cameraMatrix2=K, distCoeffs2=dist_coeffs,
+        imageSize=(width, height),
+        R=R_lr, T=t_lr.reshape(3, 1))
+
+    map1_x, map1_y = cv2.initUndistortRectifyMap(K, None, R1, P1, (width, height), cv2.CV_32FC1)
+    map2_x, map2_y = cv2.initUndistortRectifyMap(K, None, R2, P2, (width, height), cv2.CV_32FC1)
+
+    rect_l = cv2.remap(frame_l, map1_x, map1_y, cv2.INTER_LINEAR)
+    rect_r = cv2.remap(frame_r, map2_x, map2_y, cv2.INTER_LINEAR)
+
+    disp = HitNetDisparity()(rect_l, rect_r)
+    disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
+
+    dense_pts = cv2.reprojectImageTo3D(disp, Q)             # (H, W, 3) в rect-left
+    colors    = cv2.cvtColor(rect_l, cv2.COLOR_BGR2RGB)     # (H, W, 3) uint8
+
+    z = dense_pts[..., 2]
+    lo = np.percentile(z, 4)
+    hi = np.percentile(z, 96)
+
+    roi_mask = np.zeros(z.shape, dtype=bool)
+    roi_mask[roi1[1]:roi1[1] + roi1[3], roi1[0]:roi1[0] + roi1[2]] = True
+
+    valid = (disp > 0.02) & (disp < 120) & roi_mask & \
+            np.isfinite(z) & (z > 0) & (z > lo) & (z < hi)
+
+    pts_rect = dense_pts[valid]                              # (N, 3) rect-left
+    colors_v = colors[valid]                                 # (N, 3) RGB
+
+    pts_l = pts_rect @ R1                                    # rect-left → orig-left
+    X_world = (R_l @ pts_l.T).T + np.asarray(t_l).reshape(3) # orig-left → world
+
+    if verbose:
+        print(f"[dense {pair_id}] valid={valid.sum()}/{z.size}  "
+              f"z_med={np.median(z[valid]):.3f}" if valid.any() else
+              f"[dense {pair_id}] no valid pixels")
+
+    return X_world, colors_v

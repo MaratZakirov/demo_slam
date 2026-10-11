@@ -168,6 +168,14 @@ def get_center_crop_coords(frame, target_w=720, target_h=1280):
 
     return frame
 
+# Calculate relative pose from global
+def relative_pose(pose_i, pose_j):
+    R_i, t_i = pose_i
+    R_j, t_j = pose_j
+    R_ji = R_j.T @ R_i
+    t_ji = R_j.T @ (np.asarray(t_i).ravel() - np.asarray(t_j).ravel())
+    return R_ji, t_ji.reshape(3, 1)
+
 class HitNetDisparity:
     def __init__(self, model_path="models/model_float32.onnx", height=720, width=1280):
         self.model_path = model_path

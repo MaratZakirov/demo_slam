@@ -157,6 +157,24 @@ def save_ply_fast_numpy(filename, points, colors):
         comments=''
     )
 
+def save_ply_binary(filename, points, colors):
+    points = np.asarray(points, dtype=np.float32)
+    colors = np.asarray(colors, dtype=np.uint8)
+    n = len(points)
+
+    header = (f"ply\nformat binary_little_endian 1.0\n"
+              f"element vertex {n}\n"
+              f"property float x\nproperty float y\nproperty float z\n"
+              f"property uchar red\nproperty uchar green\nproperty uchar blue\n"
+              f"end_header\n")
+
+    with open(filename, 'wb') as f:
+        f.write(header.encode('ascii'))
+        data = np.empty(n, dtype=[('x','<f4'),('y','<f4'),('z','<f4'),
+                                  ('r','u1'),('g','u1'),('b','u1')])
+        data['x'], data['y'], data['z'] = points[:,0], points[:,1], points[:,2]
+        data['r'], data['g'], data['b'] = colors[:,0], colors[:,1], colors[:,2]
+        f.write(data.tobytes())
 
 def visualize_scene_matplotlib(pts_a, pts_b, K, R, t):
     """

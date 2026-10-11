@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from pair import process_stereo_pair_i
 from track import TrackManager
 from ba import bundle_adjust
+from pair import process_dense_pair
 
 if __name__ == '__main__':
     video_path = 'sample/kitchen.mp4'
@@ -46,3 +47,42 @@ if __name__ == '__main__':
 
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='pixel')
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='camera')
+
+    # Select some poses
+    candidates = [(i, i+1) for i in range(0, len(frames)-1, 2)]
+
+    ordered_pairs = []
+    for i, j in candidates:
+        R_ji, t_ji = relative_pose(cam_poses[i], cam_poses[j])
+        ordered_pairs.append((i, j) if t_ji[0, 0] < 0 else (j, i))   # i — left, j — right
+
+    for left_idx, right_idx in ordered_pairs:
+        some_X_3d = process_dense_pair(
+            frame_l=frames[left_idx],
+            frame_r=frames[right_idx],
+            pose_l=cam_poses[left_idx],
+            pose_r=cam_poses[right_idx],
+            K=K,
+            pair_id=(left_idx, right_idx),
+        )
+
+    all_pts = []
+    all_cols = []
+    for left_idx, right_idx in ordered_pairs:
+        X_world, cols = process_dense_pair(
+            frame_l=frames[left_idx],
+            frame_r=frames[right_idx],
+            pose_l=cam_poses[left_idx],
+            pose_r=cam_poses[right_idx],
+            K=K,
+            pair_id=(left_idx, right_idx),
+        )
+        all_pts.append(X_world)
+        all_cols.append(cols)
+        print(f"[pair {left_idx}-{right_idx}] +{len(X_world)} pts")
+
+    all_pts  = np.vstack(all_pts)
+    all_cols = np.vstack(all_cols)
+    print(f"[dense] total points: {len(all_pts)}")
+
+    save_ply_binary("dense.ply", all_pts, all_cols)

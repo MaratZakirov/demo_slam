@@ -9,6 +9,7 @@ from ba import bundle_adjust
 from pair import process_dense_pair
 
 if __name__ == '__main__':
+    FILTER = False
     video_path = 'sample/kitchen.mp4'
     frames = load_frames(video_path, quiet=True)
     frames = frames[::10]
@@ -51,6 +52,13 @@ if __name__ == '__main__':
     # Select some poses
     candidates = [(i, i+1) for i in range(0, len(frames)-1, 2)]
 
+    # filter mode requires much more data
+    if FILTER:
+        candidates = (candidates
+                      + [(i, i+2) for i in range(0, len(frames)-2, 2)]
+                      + [(i, i+2) for i in range(1, len(frames)-2, 2)]
+                      + [(i, i+3) for i in range(0, len(frames)-2, 3)])
+
     ordered_pairs = []
     for i, j in candidates:
         R_ji, t_ji = relative_pose(cam_poses[i], cam_poses[j])
@@ -58,7 +66,8 @@ if __name__ == '__main__':
 
     all_pts = []
     all_cols = []
-    for left_idx, right_idx in ordered_pairs:
+    all_i = []
+    for i, (left_idx, right_idx) in enumerate(ordered_pairs):
         X_world, cols = process_dense_pair(
             frame_l=frames[left_idx],
             frame_r=frames[right_idx],
@@ -69,10 +78,29 @@ if __name__ == '__main__':
         )
         all_pts.append(X_world)
         all_cols.append(cols)
+        all_i.append(np.full(len(cols), i, dtype=np.int16))
         print(f"[pair {left_idx}-{right_idx}] +{len(X_world)} pts")
 
     all_pts  = np.vstack(all_pts)
     all_cols = np.vstack(all_cols)
+    all_i = np.concatenate(all_i)
     print(f"[dense] total points: {len(all_pts)}")
 
+    if FILTER:
+        # save raw points for voting
+        np.save("X3d.npy",  all_pts)
+        np.save("cols.npy", all_cols)
+        np.save("pair.npy", all_i)
+        print("[dense] cached to X3d.npy / cols.npy / pair.npy")
+
     save_ply_binary("dense.ply", all_pts, all_cols)
+
+    if FILTER:
+        # load raw points for voting
+        all_pts = np.load("X3d.npy")
+        all_cols = np.load("cols.npy")
+        all_i = np.load("pair.npy")
+
+        # perform voxel filtering
+        vox_xyz, vox_rgb = voxel_vote(all_pts, all_cols, all_i, voxel_size=0.05, min_count=2, min_pairs=2)
+        save_ply_binary("dense_voxel.ply", vox_xyz, vox_rgb)

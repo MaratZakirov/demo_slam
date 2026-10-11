@@ -215,3 +215,51 @@ class HitNetDisparity:
         disp_resized[disp_resized <= 0.1] = np.nan
 
         return disp_resized
+
+def voxel_vote(all_pts, all_cols, all_i, voxel_size=0.1,
+               min_count=3, min_pairs=2):
+    # Voting voxels.
+    # - rounding coordinates to voxel_size
+    # - get mean in all voxels for XYZ and RGB
+    # - keep where count >= min_count and number of pairs >= min_pairs
+
+    # voxel grid ---
+    keys = np.floor(all_pts / voxel_size).astype(np.int64)   # (N, 3)
+
+    # hashing and reverse indexing
+    uniq_keys, inv = np.unique(keys, axis=0, return_inverse=True)
+    n_vox = len(uniq_keys)
+
+    # voxel counters ---
+    counts = np.bincount(inv, minlength=n_vox)
+
+    sum_xyz = np.stack([
+        np.bincount(inv, weights=all_pts[:, d], minlength=n_vox)
+        for d in range(3)
+    ], axis=1)                                                # (n_vox, 3)
+
+    cols_f = all_cols.astype(np.float64)
+    sum_rgb = np.stack([
+        np.bincount(inv, weights=cols_f[:, d], minlength=n_vox)
+        for d in range(3)
+    ], axis=1)
+
+    # mean values
+    mean_xyz = sum_xyz / counts[:, None]
+    mean_rgb = (sum_rgb / counts[:, None]).astype(np.uint8)
+
+    # number of unique pairs
+    # coding (inv, pair) into one unique int64
+    combo = inv.astype(np.int64) * (all_i.max() + 1) + all_i.astype(np.int64)
+    uniq_combo = np.unique(combo)
+    vox_of_combo = uniq_combo // (all_i.max() + 1)
+    pair_counts = np.bincount(vox_of_combo, minlength=n_vox)
+
+    # Filtering
+    keep = (counts >= min_count) & (pair_counts >= min_pairs)
+    print(f"[voxel] in={len(all_pts)}  voxels={n_vox}  "
+          f"kept={keep.sum()}  ({keep.mean()*100:.1f}%)  "
+          f"counts: med={int(np.median(counts[keep])) if keep.any() else 0}  "
+          f"pairs: med={int(np.median(pair_counts[keep])) if keep.any() else 0}")
+
+    return mean_xyz[keep], mean_rgb[keep]

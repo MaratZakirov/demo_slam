@@ -17,13 +17,19 @@
             position: absolute; bottom: 15px; left: 15px;
             color: rgba(255,255,255,0.7); font-size: 12px; pointer-events: none;
         }
+        #save-view {
+            position: absolute; top: 15px; right: 15px; z-index: 10;
+            padding: 10px 15px; background: #2a7; color: #fff;
+            border: none; border-radius: 6px; cursor: pointer; font-size: 14px;
+        }
+        #save-view:hover { background: #3b8; }
     </style>
 </head>
 <body>
     <div id="loading">Загрузка облака точек...</div>
     <div id="info">ЛКМ — вращение | ПКМ — панорама | Колёсико — зум</div>
+    <button id="save-view">Save view to console</button>
 
-    <!-- Three.js r128 (последняя версия с глобальными examples/js) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/PLYLoader.js"></script>
@@ -31,6 +37,7 @@
     <script>
         const scene = new THREE.Scene();
         const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 10000);
+        camera.up.set(0, -1, 0);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
 
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -42,6 +49,7 @@
         controls.dampingFactor = 0.05;
 
         const loader = new THREE.PLYLoader();
+        let center = new THREE.Vector3();
 
         loader.load('myscene.ply', function (geometry) {
             document.getElementById('loading').style.display = 'none';
@@ -61,9 +69,14 @@
             const points = new THREE.Points(geometry, material);
             scene.add(points);
 
-            const center = geometry.boundingSphere.center;
-            controls.target.copy(center);
-            camera.position.set(center.x, center.y + radius * 0.5, center.z + radius * 1.5);
+            center.copy(geometry.boundingSphere.center);
+
+            // --- INITIAL VIEW (edit these two lines after picking a good angle) ---
+            //camera.position.set(center.x, center.y + radius * 0.5, center.z + radius * 1.5);
+            //controls.target.copy(center);
+            camera.position.set(-11.1061, 2.1296, -4.2029);
+            controls.target.set(-1.7644, -4.5854, 29.6732);
+            // -----------------------------------------------------------------------
             controls.update();
         },
         function (xhr) {
@@ -77,6 +90,15 @@
         function (error) {
             document.getElementById('loading').innerText = 'Ошибка: не удалось загрузить myscene.ply';
             console.error(error);
+        });
+
+        document.getElementById('save-view').addEventListener('click', () => {
+            const p = camera.position;
+            const t = controls.target;
+            console.log('--- COPY BELOW ---');
+            console.log(`camera.position.set(${p.x.toFixed(4)}, ${p.y.toFixed(4)}, ${p.z.toFixed(4)});`);
+            console.log(`controls.target.set(${t.x.toFixed(4)}, ${t.y.toFixed(4)}, ${t.z.toFixed(4)});`);
+            console.log('--- END ---');
         });
 
         function animate() {

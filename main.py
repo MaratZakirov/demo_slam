@@ -56,16 +56,6 @@ if __name__ == '__main__':
         R_ji, t_ji = relative_pose(cam_poses[i], cam_poses[j])
         ordered_pairs.append((i, j) if t_ji[0, 0] < 0 else (j, i))   # i — left, j — right
 
-    for left_idx, right_idx in ordered_pairs:
-        some_X_3d = process_dense_pair(
-            frame_l=frames[left_idx],
-            frame_r=frames[right_idx],
-            pose_l=cam_poses[left_idx],
-            pose_r=cam_poses[right_idx],
-            K=K,
-            pair_id=(left_idx, right_idx),
-        )
-
     all_pts = []
     all_cols = []
     for left_idx, right_idx in ordered_pairs:

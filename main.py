@@ -9,7 +9,7 @@ from ba import bundle_adjust
 from pair import process_dense_pair
 
 if __name__ == '__main__':
-    FILTER = False
+    FILTER = True
     video_path = 'sample/kitchen.mp4'
     frames = load_frames(video_path, quiet=True)
     frames = frames[::10]

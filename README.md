@@ -45,3 +45,16 @@ To view these point clouds you may use online tool like https://swyvl.io/tools/p
 
 - 3D landmark reconstruction
 - 3D pose relocalization (finding pose of random camera shot in a processed map)
+
+# Appendix
+
+- Optical flow between cameras selects key points
+![demo](assets/optical_flow.png)
+- Matches from 2 cameras (after RANSAC)
+![demo](matches.png)
+- Key point cloud after BA
+![demo](assets/after_ba.png)
+- Disparity from 2 cameras
+![demo](assets/disp_map.png)
+- Point cloud
+[https://maratzakirov.github.io/demo_slam/](https://maratzakirov.github.io/demo_slam/)

@@ -151,6 +151,9 @@ def process_dense_pair(frame_l, frame_r, pose_l, pose_r, K,
     disp = HitNetDisparity()(rect_l, rect_r)
     disp = np.nan_to_num(disp, nan=0.0, posinf=0.0, neginf=0.0)
 
+    if verbose:
+        show_disparity(disp, title=f'pair {pair_id}')
+
     dense_pts = cv2.reprojectImageTo3D(disp, Q)             # (H, W, 3) в rect-left
     colors    = cv2.cvtColor(rect_l, cv2.COLOR_BGR2RGB)     # (H, W, 3) uint8
 

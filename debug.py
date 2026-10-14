@@ -459,3 +459,30 @@ def visualize_slam_scene(tm, world_poses, K=None, frustum_frac=0.03,
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
 
     plt.show()
+
+def show_disparity(disp, title='Disparity', cmap='gray',
+                   clip_percentiles=(2, 98), figsize=(12, 6)):
+    """
+    disp: (H, W) float — уже nan_to_num'нутый или сырой.
+          NaN/inf трактуются как невалидные.
+    """
+    disp = np.asarray(disp, dtype=np.float64)
+    valid = np.isfinite(disp)
+
+    if valid.sum() == 0:
+        print("[show_disparity] нет валидных пикселей")
+        return
+
+    lo, hi = np.percentile(disp[valid], clip_percentiles)
+
+    # Всё, что вне [lo, hi] — прижимаем к границам.
+    # Инвалиды отправляем в lo (будут чёрными), можно в hi — тогда белыми.
+    disp_show = np.clip(np.where(valid, disp, lo), lo, hi)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.imshow(disp_show, cmap=cmap, vmin=lo, vmax=hi)
+    ax.set_title(f'{title}  (valid: {valid.mean()*100:.1f}%  range: [{lo:.2f}, {hi:.2f}] px)')
+    ax.axis('off')
+    fig.colorbar(im, ax=ax, fraction=0.046, label='disparity (px)')
+    plt.tight_layout()
+    plt.show()

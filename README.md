@@ -51,9 +51,9 @@ To view these point clouds you may use online tool like https://swyvl.io/tools/p
 - Optical flow between cameras selects key points
 ![demo](assets/optical_flow.png)
 - Matches from 2 cameras (after RANSAC)
-![demo](matches.png)
+![demo](assets/matches.png)
 - Key point cloud after BA
-![demo](assets/after_ba.png)
+![demo](assets/after_ba1.png)
 - Disparity from 2 cameras
 ![demo](assets/disp_map.png)
 - Point cloud

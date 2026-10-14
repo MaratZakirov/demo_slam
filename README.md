@@ -1,38 +1,47 @@
-### demo_slam
+# demo_slam
 
-A minimal Python pipeline for **3D point cloud generation** from video frames using optical flow, Structure from Motion (SfM), and stereo rectification.
+A minimal Python pipeline for **3D point cloud reconstruction from video** using sparse feature tracking, structure from motion, bundle adjustment, dense stereo, and voxel filtering.
 
-### 🚀 Live 3D Interactive Demo
+👉 **Interactive 3D Demo:**  
+[https://maratzakirov.github.io/demo_slam/](https://maratzakirov.github.io/demo_slam/)
 
-Interact with the reconstructed 3D scene directly in your browser without downloading any files:
-
-👉 **[VIEW INTERACTIVE 3D POINT CLOUD](https://maratzakirov.github.io/demo_slam/)**
+(it renders file myscene.ply made from kitchen.mp4)
 
 *Controls: Left Click to rotate, Right Click to pan, Scroll to zoom.*
 
-### 🛠️ Features
+---
 
-* **Feature Tracking:** Lucas-Kanade optical flow (cv2.calcOpticalFlowPyrLK) instead of global SIFT features.
-* **Camera Pose Estimation:** Essential matrix parsing with RANSAC filtering.
-* **Stereo Rectification:** Reprojects stereo frame pairs onto a common plane.
-* **Disparity Mapping:** Custom vectorized subpixel NumPy SAD (Sum of Absolute Differences) algorithm alongside OpenCV BM/SGBM options.
-* **3D Output:** Fast matrix-based export to .ply format.
+## Features
 
-### 💻 Quick Start
+- Video loading and frame preprocessing.
+- Sparse feature tracking with **Lucas–Kanade optical flow**.
+- Camera pose estimation via **Essential Matrix + RANSAC**.
+- Scale correction using previously triangulated 3D points.
+- Track management through `TrackManager`: observations `(cam, u, v)`, 3D points in world frame, colors.
+- **Bundle Adjustment** with analytic sparse Jacobian and Huber loss.
+- Dense stereo for selected frame pairs:
+  - `stereoRectify`
+  - `remap`
+  - **HitNet** disparity via ONNX Runtime
+  - `reprojectImageTo3D`
+- Voxel voting and filtering of the dense point cloud.
+- Binary **PLY** export.
+- Debug visualizations: optical flow, matches, 3D scene.
 
-### 1. Install Dependencies
+---
 
-bash
+## Dependencies
 
-pip install opencv-python numpy matplotlib
+```bash
+pip install numpy opencv-python matplotlib scipy scikit-image onnxruntime
+```
 
-Use code with caution.
+## Note
 
-### 2. Run the Pipeline
+The maim.py will process the video stream and export the final 3D point cloud directly to dense.ply and dense_voxel.ply.
+To view these point clouds you may use online tool like https://swyvl.io/tools/point-cloud-viewer/
 
-Ensure your source video is placed at sample/kitchen.mp4, then execute:
+## Future development
 
-python main.py
-
-The script will process the video stream and export the final 3D point cloud directly to **myscene.ply**.
-To view it you may use online tool like https://swyvl.io/tools/point-cloud-viewer/
+- 3D landmark reconstruction
+- 3D pose relocalization (finding pose of random camera shot in a processed map)

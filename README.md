@@ -41,12 +41,17 @@ pip install numpy opencv-python matplotlib scipy scikit-image onnxruntime
 The maim.py will process the video stream and export the final 3D point cloud directly to dense.ply and dense_voxel.ply.
 To view these point clouds you may use online tool like https://swyvl.io/tools/point-cloud-viewer/
 
-## Future development
+## Development roadmap 🚀
 
-- 3D landmark reconstruction
+- Camera calibration
+- Fair keyframe selection
+- IEKF for IMU for initial pose estimation
+- Factor optimization IMU + visual odometry (as BA replacement)
 - 3D pose relocalization (finding pose of random camera shot in a processed map)
 
 # Appendix
+
+Current pipeline is the following
 
 - Optical flow between cameras selects key points
 ![demo](assets/optical_flow.png)

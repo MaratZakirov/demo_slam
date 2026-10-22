@@ -3,7 +3,7 @@ import numpy as np
 import onnxruntime as ort
 import os
 
-def load_frames(video_path: str, quiet=True) -> list:
+def load_frames(video_path: str, scale_factor=0.3, quiet=True) -> list:
     cap = cv2.VideoCapture(video_path)
 
     frame_cnt = 0
@@ -17,7 +17,6 @@ def load_frames(video_path: str, quiet=True) -> list:
     fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    scale_factor = 0.3
     new_width = int(original_width * scale_factor)
     new_height = int(original_height * scale_factor)
 
@@ -91,6 +90,36 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.z
 
     # return artifacts plus residual mask of validness for previois matches
     return pts_i, pts_ip1, pts_ip1_inhereted, valid_mask[N:]
+
+def select_key_frames(frames: list, drop: int, min_survival: float = 0.7) -> list:
+    # Select heuristically frames which are far enough in optical flow sense
+    # to have good base but not too far enough to still be able to track using optical flow
+    frames = frames[::drop]
+    N = len(frames)
+    gray = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in frames]
+    lk_params = dict(winSize=(21, 21), maxLevel=3,
+                     criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+
+    key_idx = []
+    last_kf = 0
+    while last_kf < N:
+        pts_k = cv2.goodFeaturesToTrack(gray[last_kf], maxCorners=1000,
+                                        qualityLevel=0.01, minDistance=10)
+        if pts_k is None:
+            last_kf += 1
+            continue
+
+        key_idx.append(last_kf)
+
+        for i in range(last_kf + 1, N):
+            _, status, _ = cv2.calcOpticalFlowPyrLK(gray[last_kf], gray[i], pts_k, None, **lk_params)
+            if float(status.mean()) < min_survival:
+                last_kf = i
+                break
+        else:
+            break
+
+    return [frames[j] for j in key_idx]
 
 def decompose_2d_vector_field(xy: np.ndarray, uv: np.ndarray):
     xy_centered = xy - np.mean(xy, axis=0)

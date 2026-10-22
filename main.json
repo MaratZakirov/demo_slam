@@ -1,0 +1,12 @@
+{
+  "camera_json" : "calibration/camera.json",
+  "video" : "sample/20261018_153005/VID_20261018_153005.mp4",
+  "scale_factor" : 0.3,
+  "drop": 2,
+  "imu" : {
+    "t" : "sample/20261018_153005/VID_20261018_153005_imu_timestamps.csv",
+    "acc" : "sample/20261018_153005/VID_20261018_153005accel.csv",
+    "gyr" : "sample/20261018_153005/VID_20261018_153005gyro.csv",
+    "mag" : "sample/20261018_153005/VID_20261018_153005magnetic.csv"
+  }
+}

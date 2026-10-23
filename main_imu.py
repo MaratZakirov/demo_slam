@@ -8,11 +8,18 @@ from track import TrackManager
 from ba import bundle_adjust
 from pair import process_dense_pair
 import json
+import csv
 
 if __name__ == '__main__':
     # load configs
     main_config = json.load(open('main.json'))
     camera_config = json.load(open(main_config['camera_json']))
+
+    # load IMU data
+    t   = np.loadtxt(main_config['imu']['t'])
+    acc = np.loadtxt(main_config['imu']['acc'], delimiter=',')
+    gyr = np.loadtxt(main_config['imu']['gyr'], delimiter=',')
+    mag = np.loadtxt(main_config['imu']['mag'], delimiter=',')
 
     # load and trim camera parameters
     dist = np.array(camera_config['D'])
@@ -30,5 +37,3 @@ if __name__ == '__main__':
         plt.title(f'Кадр {i + 1} из {len(frames)}')
         plt.show()
 
-    # load IMU data
-    #t, acc, gyr, mag = load_imu()

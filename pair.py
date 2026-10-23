@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # process frames i -> i+1 where also i-th is Left and i+1 is Right
 # regardless of their real motion
 # HitNet and dense stereo map will be applied in the next stage
-def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, verbose=False):
+def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, verbose=False):
     # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
     # Всё состояние треков живёт в `tm`. Пара его обновляет.
     #
@@ -16,7 +16,8 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, ve
     # Нужна для перевода 3D новых точек из системы cam_left в систему кадра 0
     #
     # Returns: R, t — поза cam_ip1 относительно cam_i (X_ip1 = R @ X_i + t).
-    K = get_matrix_K_from_frame(frame_i)
+    if K is None:
+        K = get_matrix_K_from_frame(frame_i)
 
     # ---- Активные треки с их 2D на кадре cam_left ----
     active_ids, pts_i_inherited, X_i_inhereted = tm.active_on(cam_i)

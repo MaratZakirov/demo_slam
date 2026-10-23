@@ -43,6 +43,11 @@ def load_frames(video_path: str, scale_factor=0.3, quiet=True) -> list:
 
     return frames
 
+def undistort_frames(frames: list, dist: np.ndarray, K: np.ndarray) -> list:
+    h, w = frames[0].shape[:2]
+    map1, map2 = cv2.initUndistortRectifyMap(K, dist, None, K, (w, h), cv2.CV_32FC1)
+    return [cv2.remap(f, map1, map2, interpolation=cv2.INTER_LINEAR) for f in frames]
+
 def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.zeros((0, 2)), max_features=1000):
     """
     Находит сопоставленные точки между двумя кадрами с использованием

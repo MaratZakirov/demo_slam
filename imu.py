@@ -14,30 +14,15 @@ class IMUData:
         self.g_world = np.array([0.0, 0.0, -9.81])
 
     def load(self, t, acc, gyr, mag):
-        self.t = np.loadtxt(t).ravel()
+        self.t = np.loadtxt(t).ravel() * 1e-9
         self.acc, self.acc_t = np.split(np.loadtxt(acc, delimiter=','), [3], axis=1)
         self.gyr, self.gyr_t = np.split(np.loadtxt(gyr, delimiter=','), [3], axis=1)
         self.mag, self.mag_t = np.split(np.loadtxt(mag, delimiter=','), [3], axis=1)
+        self.acc_t, self.gyr_t, self.mag_t = ((timestamp * 1e-9) for timestamp in [self.acc_t, self.gyr_t, self.mag_t])
 
     def mask_frames(self, idx):
         self.t = self.t[np.asarray(idx)]
 
-    def detect_units(self, verbose=True):
-        """Грубая авто-нормализация в rad/s и m/s²."""
-        gyr_max = float(np.max(np.abs(self.gyr)))
-        acc_med = float(np.median(np.linalg.norm(self.acc, axis=1)))
-
-        if gyr_max > 10.0:   # deg/s
-            if verbose:
-                print(f"[IMU] gyro: deg/s -> rad/s  (max={gyr_max:.1f})")
-            self.gyr = np.deg2rad(self.gyr)
-
-        if 0.5 < acc_med < 2.0:   # g -> m/s²
-            if verbose:
-                print(f"[IMU] acc: g -> m/s²  (med norm={acc_med:.2f})")
-            self.acc = self.acc * 9.81
-
-    # ---------- инициализация ориентации из гравитации ----------
     def init_orientation_from_gravity(self, n_first=50):
         """R0 такая, что R0 @ g_imu ≈ g_world. Для первой пары — обязательно."""
         a0 = np.mean(self.acc[:n_first], axis=0)

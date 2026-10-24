@@ -96,7 +96,7 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.z
     # return artifacts plus residual mask of validness for previois matches
     return pts_i, pts_ip1, pts_ip1_inhereted, valid_mask[N:]
 
-def select_key_frames(frames: list, drop: int, min_survival: float = 0.7) -> list:
+def select_key_frames(frames: list, drop: int, min_survival: float = 0.7):
     # Select heuristically frames which are far enough in optical flow sense
     # to have good base but not too far enough to still be able to track using optical flow
     frames = frames[::drop]
@@ -124,7 +124,7 @@ def select_key_frames(frames: list, drop: int, min_survival: float = 0.7) -> lis
         else:
             break
 
-    return [frames[j] for j in key_idx]
+    return [frames[j] for j in key_idx], np.array(key_idx)
 
 def decompose_2d_vector_field(xy: np.ndarray, uv: np.ndarray):
     xy_centered = xy - np.mean(xy, axis=0)

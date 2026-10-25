@@ -50,32 +50,39 @@ if __name__ == '__main__':
     R_0toi = np.eye(3)
     t_0toi = np.zeros((3, 1))
 
+    n = np.array([0.0, 0.0, 1.0])
+
     for i in range(len(frames) - 1):
-        # IMU data part for initial poses for process_stereo_pair_i
-        R_delta_imu, t_delta_imu, v_delta_imu = imu.preintegrate(imu.t[i], imu.t[i+1], R_0_imu, v_0_imu)
-        R_old = R_0_imu.copy()  # до обновления!
+        R_delta_imu, t_delta_imu, v_delta_imu = imu.preintegrate(
+            imu.t[i], imu.t[i + 1], R_0_imu, v_0_imu)
+
+        R_old = R_0_imu.copy()
         R_0_imu = R_0_imu @ R_delta_imu
-        v_0_imu = v_0_imu + R_old @ v_delta_imu  # body(t0) -> world
+        v_0_imu = v_0_imu + R_old @ v_delta_imu
 
-        # предвариельные замеры для process_stereo_pair_i
-        R_ij_imu = R_delta_imu.T  # body(t0) -> body(t1)
-        t_ij_imu = R_delta_imu.T @ t_delta_imu  # сдвиг в body(t1)... проверить на тесте
+        # pose cam_i -> cam_ip1 для H: X_ip1 = R_ij @ X_i + t_ij
+        R_ij_imu = R_delta_imu.T
+        t_ij_imu = -R_delta_imu.T @ t_delta_imu
 
-        H_iip1 = imu.build_H(R_delta, t_delta, K, n, d_bar)
+        # средняя глубина в cam_i
+        if len(tm.X) >= 20:
+            X_w = np.array(list(tm.X.values()))
+            R_ito0 = R_0toi.T
+            t_ito0 = -R_0toi.T @ t_0toi
+            X_cam_i = (R_ito0.T @ (X_w - t_ito0.ravel()).T).T
+            d_bar = float(np.median(X_cam_i[:, 2]))
+        else:
+            d_bar = None
+
+        H_iip1 = imu.build_H(R_ij_imu, t_ij_imu, K, n, d_bar)
 
         R_i, t_i = process_stereo_pair_i(
-            frames[i], frames[i+1], tm,
-            world_pose=(R_0toi.T, -R_0toi.T @ t_0toi), # R_ito0 t_it0
+            frames[i], frames[i + 1], tm,
+            world_pose=(R_0toi.T, -R_0toi.T @ t_0toi),
             cam_i=i, cam_ip1=i + 1, H_iip1=H_iip1, verbose=0)
 
-        # instantly obtaining camera pose in camera 0 system
         cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
-
-        # Обновляем: 0→(i+1) = (i→i+1) ∘ (0→i)
         R_0toi = R_i @ R_0toi
         t_0toi = R_i @ t_0toi + t_i
 
-        print(f"[iter {i}] {tm.stats(i)}")
-
-    # last camera
-    cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
+        print(f"[iter {i}] {tm.stats(i)}  d_bar={d_bar}")

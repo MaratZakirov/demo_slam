@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # process frames i -> i+1 where also i-th is Left and i+1 is Right
 # regardless of their real motion
 # HitNet and dense stereo map will be applied in the next stage
-def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, verbose=False):
+def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, H_iip1=None, verbose=False):
     # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
     # Всё состояние треков живёт в `tm`. Пара его обновляет.
     #
@@ -25,7 +25,8 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
     # ---- LK: тянем их на frame_right ----
     pts_i_new, pts_ip1_new, pts_ip1_inherited, mask_prev = \
         get_matches_using_optical_flow(frame_i, frame_ip1,
-                                       pts_i_inherited=pts_i_inherited)
+                                       pts_i_inherited=pts_i_inherited,
+                                       H=H_iip1)
 
     active_ids = active_ids[mask_prev]
     pts_i_inherited = pts_i_inherited[mask_prev]

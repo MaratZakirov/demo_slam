@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 import os
+from imu import *
 
 def load_frames(video_path: str, scale_factor=0.3, quiet=True) -> list:
     cap = cv2.VideoCapture(video_path)
@@ -48,15 +49,14 @@ def undistort_frames(frames: list, dist: np.ndarray, K: np.ndarray) -> list:
     map1, map2 = cv2.initUndistortRectifyMap(K, dist, None, K, (w, h), cv2.CV_32FC1)
     return [cv2.remap(f, map1, map2, interpolation=cv2.INTER_LINEAR) for f in frames]
 
-def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.zeros((0, 2)), max_features=1000):
-    """
-    Находит сопоставленные точки между двумя кадрами с использованием
-    локального оптического потока Лукаса-Канаде вместо глобального SIFT.
-
-    Returns:
-        pts_i   (np.ndarray): Координаты точек на первом кадре (K x 2)
-        pts_ip1 (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
-    """
+def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.zeros((0, 2)), max_features=1000, H=None):
+    # Находит сопоставленные точки между двумя кадрами с использованием
+    # локального оптического потока Лукаса-Канаде
+    # For initial setup may use Homography matrix
+    #
+    # Returns:
+    #    pts_i   (np.ndarray): Координаты точек на первом кадре (K x 2)
+    #    pts_ip1 (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
     gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
     gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
 
@@ -71,19 +71,32 @@ def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.z
     if pts_i_raw is None:
         pts_i_raw = np.empty((0, 1, 2), dtype=np.float32)
 
+    N = len(pts_i_raw)
+    pts_i_raw = np.concatenate([pts_i_raw, pts_i_inherited.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
+
+    if H is not None:
+        # Here we calculate Homography matrix and use for enhance candidates for LK
+        xy = pts_i_raw.reshape(-1, 2).astype(np.float64)
+        homog = np.hstack([xy, np.ones((len(xy), 1))])
+        pred = (H @ homog.T).T
+        pred = pred[:, :2] / pred[:, 2:3]
+        pts_seed = pred.reshape(-1, 1, 2).astype(np.float32)
+        flags = cv2.OPTFLOW_USE_INITIAL_FLOW
+    else:
+        pts_seed = None
+        flags = 0
+
     # Настраиваем параметры локального поиска Лукаса-Канаде
     lk_params = dict(
         winSize=(21, 21),  # Ищем точку строго в локальном окне 21x21 пиксель
         maxLevel=3,  # Пирамиды изображений для отслеживания быстрых сдвигов
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01)
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
+        flags=flags
     )
-
-    N = len(pts_i_raw)
-    pts_i_raw = np.concatenate([pts_i_raw, pts_i_inherited.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
 
     # Вычисляем оптический поток (смещение точек на кадр B)
     # status == 1 для точек, которые успешно нашлись в локальном окне на кадре B
-    pts_ip1_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_left, gray_right, pts_i_raw, None, **lk_params)
+    pts_ip1_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_left, gray_right, pts_i_raw, pts_seed, **lk_params)
 
     # Фильтруем точки с помощью NumPy-маски status
     valid_mask = (status == 1).reshape(-1)

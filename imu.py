@@ -103,12 +103,10 @@ class IMUData:
 
         return dR, dt_delta, dv
 
-    # ---------- гомография для LK-seed ----------
     def build_H(self, R_delta, t_delta, K, n, d_bar):
-        """
-        H: cam_i -> cam_ip1, индуцированная плоскостью с нормалью n (в cam_i)
-        и средней глубиной d_bar. Если d_bar недостоверен — fallback на чистое вращение.
-        """
+        # Homography for LK-seed
+        # H: cam_i -> cam_ip1, индуцированная плоскостью с нормалью n (в cam_i)
+        # и средней глубиной d_bar. Если d_bar недостоверен — fallback на чистое вращение.
         K_inv = np.linalg.inv(K)
         R_delta = np.asarray(R_delta, dtype=float).reshape(3, 3)
         t_delta = np.asarray(t_delta, dtype=float).reshape(3, 1)

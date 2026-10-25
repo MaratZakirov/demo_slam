@@ -18,7 +18,7 @@ class IMUData:
         self.acc, self.acc_t = np.split(np.loadtxt(acc, delimiter=','), [3], axis=1)
         self.gyr, self.gyr_t = np.split(np.loadtxt(gyr, delimiter=','), [3], axis=1)
         self.mag, self.mag_t = np.split(np.loadtxt(mag, delimiter=','), [3], axis=1)
-        self.acc_t, self.gyr_t, self.mag_t = ((timestamp * 1e-9) for timestamp in [self.acc_t, self.gyr_t, self.mag_t])
+        self.acc_t, self.gyr_t, self.mag_t = ((timestamp[:, 0] * 1e-9) for timestamp in [self.acc_t, self.gyr_t, self.mag_t])
 
     def mask_frames(self, idx):
         self.t = self.t[np.asarray(idx)]
@@ -37,10 +37,8 @@ class IMUData:
         return R.as_matrix()
 
     def _slice(self, ts, vals, t0, t1):
-        if t1 <= t0:
-            return np.array([t0]), vals[:1]
-        if len(ts) < 2:
-            return np.array([t0]), vals[:1]
+        assert t0 < t1, 'Reverse in time direction'
+        assert len(ts) > 100, 'IMU data is not enough'
 
         # внутренние точки
         mask = (ts > t0) & (ts < t1)
@@ -55,19 +53,14 @@ class IMUData:
         v_out  = np.concatenate([v0[None], v_in, v1[None]])
         return ts_out, v_out
 
-    # ---------- предынтегрирование между двумя моментами ----------
-    def preintegrate(self, t0, t1, R0=None, v0=None, bg=None, ba=None, g_world=None):
-        """
-        Возвращает относительное движение IMU-фрейма между t0 и t1:
-            dR : X_body(t0) -> X_body(t1)   (3,3) SO(3)
-            dt : сдвиг в системе body(t0)    (3,)
-            dv : приращение скорости в body(t0) (3,)   (опционально)
-        Интегрирование — в world-frame с явной гравитацией, потом проекция в body(t0).
-        """
-        if R0 is None:
-            R0 = np.eye(3)
-        if v0 is None:
-            v0 = np.zeros(3)
+    def preintegrate(self, t0, t1, R0, v0, bg=None, ba=None, g_world=None):
+        # Integration (Euler may be switched to RK4) IMU data between t0 and t1
+        # Возвращает относительное движение IMU-фрейма между t0 и t1:
+        #    dR : X_body(t0) -> X_body(t1)   (3,3) SO(3)
+        #    dt : сдвиг в системе body(t0)    (3,)
+        #    dv : приращение скорости в body(t0) (3,)   (опционально)
+        # Интегрирование — в world-frame с явной гравитацией, потом проекция в body(t0).
+        # Returns SE_2(3) element (5x5 matrix)
         if bg is None:
             bg = np.zeros(3)
         if ba is None:
@@ -95,16 +88,19 @@ class IMUData:
             a_k = a_grid[k] - ba          # ускорение в body
             w_k = w_grid[k] - bg          # угловая скорость в body
 
+            # Euler integration for accelerometer
             a_world = R @ a_k + g_world
             p = p + v * dt + 0.5 * a_world * dt * dt
             v = v + a_world * dt
+
+            # Rotation correction via matrix exponent from so(3) -> SO(3)
             R = R @ Rotation.from_rotvec(w_k * dt).as_matrix()
 
         # проекция в body(t0)
-        R0T = R0.T
-        dR = R0T @ R
-        dt_delta = R0T @ p
-        dv = R0T @ (v - v0)
+        dR = R0.T @ R
+        dt_delta = R0.T @ p
+        dv = R0.T @ (v - v0)
+
         return dR, dt_delta, dv
 
     # ---------- гомография для LK-seed ----------

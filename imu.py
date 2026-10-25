@@ -24,14 +24,18 @@ class IMUData:
         self.t = self.t[np.asarray(idx)]
 
     def init_orientation_from_gravity(self, n_first=50):
-        """R0 такая, что R0 @ g_imu ≈ g_world. Для первой пары — обязательно."""
+        # R0 такая, что R0 @ g_imu ≈ g_world. Для первой пары — обязательно.
         a0 = np.mean(self.acc[:n_first], axis=0)
         a0_n = a0 / (np.linalg.norm(a0) + 1e-12)
         g_n  = self.g_world / np.linalg.norm(self.g_world)
-        R, _ = Rotation.align_vectors(g_n[None, :], a0_n[None, :])
+        R, _ = Rotation.align_vectors(-g_n[None, :], a0_n[None, :])
+
+        # self check
+        a = self.acc[:n_first] @ R.as_matrix().T + self.g_world
+        assert np.median(np.linalg.norm(a, axis=1)) < 0.4, 'acceleration at inicialization is too high'
+
         return R.as_matrix()
 
-    # ---------- срез с интерполяцией на границах ----------
     def _slice(self, ts, vals, t0, t1):
         if t1 <= t0:
             return np.array([t0]), vals[:1]

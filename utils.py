@@ -49,67 +49,101 @@ def undistort_frames(frames: list, dist: np.ndarray, K: np.ndarray) -> list:
     map1, map2 = cv2.initUndistortRectifyMap(K, dist, None, K, (w, h), cv2.CV_32FC1)
     return [cv2.remap(f, map1, map2, interpolation=cv2.INTER_LINEAR) for f in frames]
 
-def get_matches_using_optical_flow(frame_left, frame_right, pts_i_inherited=np.zeros((0, 2)), max_features=1000, H=None):
-    # Находит сопоставленные точки между двумя кадрами с использованием
-    # локального оптического потока Лукаса-Канаде
-    # For initial setup may use Homography matrix
+def get_matches_using_optical_flow(frame_left, frame_right,
+                                   pts_i_inherited=np.zeros((0, 2)),
+                                   max_features=1000, H=None,
+                                   fb_thresh=1.5, max_err=None):
+    # Находит сопоставленные точки между двумя кадрами через LK + forward-backward check.
+    #
+    # FB-check: трекаем i -> i+1 (forward) и i+1 -> i (backward).
+    # Хороший матч возвращается в исходную точку: ||p_i - backward(forward(p_i))|| < fb_thresh.
+    # Отсекает случайные промахи LK (особенно на самоподобных текстурах: трава, асфальт).
+    #
+    # max_err (опционально): дополнительный фильтр по err из forward LK.
     #
     # Returns:
-    #    pts_i   (np.ndarray): Координаты точек на первом кадре (K x 2)
-    #    pts_ip1 (np.ndarray): Координаты этих же точек на втором кадре (K x 2)
-    gray_left = cv2.cvtColor(frame_left, cv2.COLOR_BGR2GRAY)
+    #    pts_i               (K x 2): точки на первом кадре (новые, прошедшие FB)
+    #    pts_ip1             (K x 2): их пары на втором кадре
+    #    pts_ip1_inhereted   (M x 2): ВСЕ унаследованные на втором кадре
+    #    valid_mask_prev     (M,)   : FB-маска для унаследованных (True = прошли)
+    gray_left  = cv2.cvtColor(frame_left,  cv2.COLOR_BGR2GRAY)
     gray_right = cv2.cvtColor(frame_right, cv2.COLOR_BGR2GRAY)
 
-    # 2. Находим надежные углы ТОЛЬКО на первом кадре
-    pts_i_raw = cv2.goodFeaturesToTrack(
+    # Новые углы только на левом кадре
+    pts_i_new = cv2.goodFeaturesToTrack(
         gray_left,
         maxCorners=max_features,
-        qualityLevel=0.01,  # Порог качества (чем выше, тем строже отбор углов)
-        minDistance=10  # Минимальное расстояние в пикселях между точками
+        qualityLevel=0.01,
+        minDistance=10,
+    )
+    if pts_i_new is None:
+        pts_i_new = np.empty((0, 1, 2), dtype=np.float32)
+
+    N = len(pts_i_new)
+    M = len(pts_i_inherited)
+
+    # Объединяем: новые сначала, унаследованные после. Срез [:N] — новые, [N:] — унаследованные.
+    pts_i_raw = np.concatenate(
+        [pts_i_new, pts_i_inherited.reshape(-1, 1, 2)],
+        dtype=np.float32, axis=0
     )
 
-    if pts_i_raw is None:
-        pts_i_raw = np.empty((0, 1, 2), dtype=np.float32)
-
-    N = len(pts_i_raw)
-    pts_i_raw = np.concatenate([pts_i_raw, pts_i_inherited.reshape(-1, 1, 2)], dtype=np.float32, axis=0)
-
-    if H is not None:
-        # Here we calculate Homography matrix and use for enhance candidates for LK
-        xy = pts_i_raw.reshape(-1, 2).astype(np.float64)
+    # --- Forward LK: i -> i+1 ---
+    if H is not None and len(pts_i_raw) > 0:
+        xy    = pts_i_raw.reshape(-1, 2).astype(np.float64)
         homog = np.hstack([xy, np.ones((len(xy), 1))])
-        pred = (H @ homog.T).T
-        pred = pred[:, :2] / pred[:, 2:3]
-        pts_seed = pred.reshape(-1, 1, 2).astype(np.float32)
-        flags = cv2.OPTFLOW_USE_INITIAL_FLOW
+        pred  = (H @ homog.T).T
+        pred  = pred[:, :2] / pred[:, 2:3]
+        pts_seed = np.ascontiguousarray(pred.reshape(-1, 1, 2).astype(np.float32))
+        flags_f  = cv2.OPTFLOW_USE_INITIAL_FLOW
     else:
         pts_seed = None
-        flags = 0
+        flags_f  = 0
 
-    # Настраиваем параметры локального поиска Лукаса-Канаде
-    lk_params = dict(
-        winSize=(21, 21),  # Ищем точку строго в локальном окне 21x21 пиксель
-        maxLevel=3,  # Пирамиды изображений для отслеживания быстрых сдвигов
+    lk_fwd = dict(
+        winSize=(21, 21),
+        maxLevel=3,
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
-        flags=flags
+        flags=flags_f,
+    )
+    pts_ip1_raw, status_f, err_f = cv2.calcOpticalFlowPyrLK(
+        gray_left, gray_right, pts_i_raw, pts_seed, **lk_fwd
     )
 
-    # Вычисляем оптический поток (смещение точек на кадр B)
-    # status == 1 для точек, которые успешно нашлись в локальном окне на кадре B
-    pts_ip1_raw, status, err = cv2.calcOpticalFlowPyrLK(gray_left, gray_right, pts_i_raw, pts_seed, **lk_params)
+    # --- Backward LK: i+1 -> i (без seed — точки на правом уже хорошие) ---
+    lk_bwd = dict(
+        winSize=(21, 21),
+        maxLevel=3,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
+        flags=0,
+    )
+    pts_i_back, status_b, _ = cv2.calcOpticalFlowPyrLK(
+        gray_right, gray_left, pts_ip1_raw, None, **lk_bwd
+    )
 
-    # Фильтруем точки с помощью NumPy-маски status
-    valid_mask = (status == 1).reshape(-1)
-    pts_i = pts_i_raw[:N][valid_mask[:N]].reshape(-1, 2)
+    # --- FB-ошибка и маска ---
+    fb_err = np.linalg.norm(
+        pts_i_raw.reshape(-1, 2) - pts_i_back.reshape(-1, 2), axis=1
+    )
+    valid_mask = (
+        (status_f.reshape(-1) == 1) &
+        (status_b.reshape(-1) == 1) &
+        (fb_err < fb_thresh)
+    )
+    if max_err is not None:
+        valid_mask &= (err_f.reshape(-1) < max_err)
+
+    # Новые (первые N) — фильтруем
+    pts_i   = pts_i_raw[:N][valid_mask[:N]].reshape(-1, 2)
     pts_ip1 = pts_ip1_raw[:N][valid_mask[:N]].reshape(-1, 2)
 
+    # Унаследованные (последние M) — возвращаем ВСЕ, маску отдельно (как и раньше)
     pts_ip1_inhereted = pts_ip1_raw[N:].reshape(-1, 2)
-    assert len(pts_ip1_inhereted) == len(pts_i_inherited)
+    assert len(pts_ip1_inhereted) == M
 
-    # return artifacts plus residual mask of validness for previois matches
     return pts_i, pts_ip1, pts_ip1_inhereted, valid_mask[N:]
 
-def select_key_frames(frames: list, drop: int, min_survival: float = 0.7):
+def select_key_frames(frames: list, drop: int, min_survival: float = 0.7, verbose=False):
     # Select heuristically frames which are far enough in optical flow sense
     # to have good base but not too far enough to still be able to track using optical flow
     frames = frames[::drop]
@@ -131,6 +165,8 @@ def select_key_frames(frames: list, drop: int, min_survival: float = 0.7):
 
         for i in range(last_kf + 1, N):
             _, status, _ = cv2.calcOpticalFlowPyrLK(gray[last_kf], gray[i], pts_k, None, **lk_params)
+            if verbose:
+                print(f"key frame {last_kf}->{i} keeps {status.sum()} points")
             if float(status.mean()) < min_survival:
                 last_kf = i
                 break

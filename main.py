@@ -12,8 +12,12 @@ if __name__ == '__main__':
     FILTER = True
     video_path = 'sample/kitchen.mp4'
     frames = load_frames(video_path, quiet=True)
-    frames = frames[::10]
-    frames = frames[:10]
+    if 1:
+        # currently better, why?
+        frames = frames[::10]
+        frames = frames[:10]
+    else:
+        frames, selected_idx = select_key_frames(frames, min_survival=0.65, drop=1)
     for i in range(len(frames)):
         frames[i] = get_center_crop_coords(frames[i])
 
@@ -57,7 +61,7 @@ if __name__ == '__main__':
         candidates = (candidates
                       + [(i, i+2) for i in range(0, len(frames)-2, 2)]
                       + [(i, i+2) for i in range(1, len(frames)-2, 2)]
-                      + [(i, i+3) for i in range(0, len(frames)-2, 3)])
+                      + [(i, i+3) for i in range(0, len(frames)-3, 3)])
 
     ordered_pairs = []
     for i, j in candidates:

@@ -143,7 +143,7 @@ def get_matches_using_optical_flow(frame_left, frame_right,
 
     return pts_i, pts_ip1, pts_ip1_inhereted, valid_mask[N:]
 
-def select_key_frames(frames: list, drop: int, min_survival: float = 0.7, verbose=False):
+def select_key_frames(frames: list, drop: int, min_survival: float = 0.5, verbose=False):
     # Select heuristically frames which are far enough in optical flow sense
     # to have good base but not too far enough to still be able to track using optical flow
     frames = frames[::drop]
@@ -164,10 +164,18 @@ def select_key_frames(frames: list, drop: int, min_survival: float = 0.7, verbos
         key_idx.append(last_kf)
 
         for i in range(last_kf + 1, N):
-            _, status, _ = cv2.calcOpticalFlowPyrLK(gray[last_kf], gray[i], pts_k, None, **lk_params)
+            # forward + backward LK
+            pts_fwd, st_f, _ = cv2.calcOpticalFlowPyrLK(gray[last_kf], gray[i], pts_k, None, **lk_params)
+            pts_bwd, st_b, _ = cv2.calcOpticalFlowPyrLK(gray[i], gray[last_kf], pts_fwd, None, **lk_params)
+
+            # FB-check: матч хорош, если вернулся в исходную точку
+            fb_err = np.linalg.norm(pts_k.reshape(-1, 2) - pts_bwd.reshape(-1, 2), axis=1)
+            good = (st_f.ravel() == 1) & (st_b.ravel() == 1) & (fb_err < 1.5)
+
             if verbose:
-                print(f"key frame {last_kf}->{i} keeps {status.sum()} points")
-            if float(status.mean()) < min_survival:
+                print(f"key frame {last_kf}->{i}: raw={st_f.mean():.2f} fb={good.mean():.2f}")
+
+            if float(good.mean()) < min_survival:
                 last_kf = i
                 break
         else:

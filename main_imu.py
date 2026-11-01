@@ -27,10 +27,11 @@ if __name__ == '__main__':
     K[2, 2] = 1
 
     # load frames
-    frames = load_frames(main_config['video'], scale_factor=main_config['scale_factor'], quiet=True)
-    frames, selected_idx = select_key_frames(frames, drop=main_config['drop'])
+    frames = load_frames(main_config['video'], scale_factor=main_config['scale_factor'], quiet=True)[:150]
+    if abs(dist[0]) > 0.01:
+        frames = undistort_frames(frames, dist, K)
+    frames, selected_idx = select_key_frames(frames, min_survival=0.65, drop=main_config['drop'])
     imu.mask_frames(selected_idx)
-    frames = undistort_frames(frames, dist, K)
 
     if 0:
         for i, frame in enumerate(frames):
@@ -79,6 +80,7 @@ if __name__ == '__main__':
         R_i, t_i = process_stereo_pair_i(
             frames[i], frames[i + 1], tm,
             world_pose=(R_0toi.T, -R_0toi.T @ t_0toi),
+            K=K,
             cam_i=i, cam_ip1=i + 1, H_iip1=H_iip1, verbose=0)
 
         cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
@@ -86,3 +88,11 @@ if __name__ == '__main__':
         t_0toi = R_i @ t_0toi + t_i
 
         print(f"[iter {i}] {tm.stats(i)}  d_bar={d_bar}")
+
+    # last camera
+    cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
+
+    cam_poses, tm, result = bundle_adjust(tm, cam_poses, K)
+
+    visualize_slam_scene(tm, cam_poses, K=K, color_mode='pixel')
+    visualize_slam_scene(tm, cam_poses, K=K, color_mode='camera')

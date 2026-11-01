@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # ==================== SETTINGS ====================
 CHESSBOARD_SIZE = (9, 6)
 SQUARE_SIZE = 0.052
-IMAGES_PATH = "infinite_focus/*jpg"
+IMAGES_PATH = "realme11_focus_1m/*jpg"
 VERBOSE=False
 # ==================================================
 
@@ -72,7 +72,17 @@ if len(imgpoints) < 10:
     print("\nВнимание! Распознано слишком мало кадров (меньше 10). Результат может быть неточным.")
 
 print("\nЗапуск математического движка калибровки...")
-ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img_size, None, None)
+#ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img_size, None, None)
+result = cv2.calibrateCameraExtended(objpoints, imgpoints, img_size, None, None)
+ret, mtx, dist, rvecs, tvecs, std_int, std_ext = result[:7]
+
+std = np.asarray(std_int).ravel()   # (9,) — fx, fy, cx, cy, k1, k2, p1, p2, k3
+
+print(f"fx = {mtx[0,0]:.2f} ± {std[0]:.2f}")
+print(f"fy = {mtx[1,1]:.2f} ± {std[1]:.2f}")
+print(f"cx = {mtx[0,2]:.2f} ± {std[2]:.2f}")
+print(f"cy = {mtx[1,2]:.2f} ± {std[3]:.2f}")
+print(f"k1 = {dist.ravel()[0]:.4f} ± {std[4]:.4f}")
 
 print(f"Калибровка завершена! Ошибка репроекции (RMS): {ret:.4f} пикселей")
 

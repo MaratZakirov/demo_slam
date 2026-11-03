@@ -81,7 +81,7 @@ if __name__ == '__main__':
             frames[i], frames[i + 1], tm,
             world_pose=(R_0toi.T, -R_0toi.T @ t_0toi),
             K=K,
-            cam_i=i, cam_ip1=i + 1, H_iip1=H_iip1, verbose=0)
+            cam_i=i, cam_ip1=i + 1, H_iip1=H_iip1, t_iip1_imu=t_ij_imu, verbose=0)
 
         cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
         R_0toi = R_i @ R_0toi
@@ -96,3 +96,4 @@ if __name__ == '__main__':
 
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='pixel')
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='camera')
+

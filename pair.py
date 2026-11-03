@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 # process frames i -> i+1 where also i-th is Left and i+1 is Right
 # regardless of their real motion
 # HitNet and dense stereo map will be applied in the next stage
-def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, H_iip1=None, verbose=False):
+def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, H_iip1=None, t_iip1_imu=None, verbose=False):
     # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
     # Всё состояние треков живёт в `tm`. Пара его обновляет.
     #
@@ -65,24 +65,28 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
     # с глубиной, которую даёт свежая триангуляция по текущей паре.
     if len(alive_ids) >= 3:
         R_ito0, t_ito0 = world_pose
-        z_inherited_world = np.median(np.abs(alive_X_i_inherited[:, 2]))
+
+        # convert inherited points from world (camera 0) system to camera 0 system
+        X_i_inherited_local_meters = (R_ito0.T @ alive_X_i_inherited.T + -R_ito0.T @ t_ito0).T
+        z_inherited_world = np.median(np.abs(X_i_inherited_local_meters[:, 2]))
+
         X_4d = cv2.triangulatePoints(
             K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
             K @ np.hstack([R, t.reshape(3, 1)]),
             alive_pts_i_inherited.T, alive_pts_ip1_inherited.T)
         X_i_inherited_cam_i = (X_4d[:3] / X_4d[3]).T
-
-        # convert retriangulated inherited points in world (camera 0) system
-        X_i_inherited_cam_i = (R_ito0 @ X_i_inherited_cam_i.T + t_ito0).T   # 4.35
-
         z_inherited_cam_i = np.median(np.abs(X_i_inherited_cam_i[:, 2]))
         scale = z_inherited_world / z_inherited_cam_i
         t = t * scale
 
-        median_shift = np.median(np.linalg.norm(np.abs(X_i_inherited_cam_i - alive_X_i_inherited), axis=1))
+        median_shift = np.median(np.linalg.norm(X_i_inherited_cam_i * scale - X_i_inherited_local_meters, axis=1))
 
         if verbose:
             print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f} median_shift={median_shift:.3f}")
+    else:
+        # Take scale at first step visual features are useless ath this point
+        imu_scale = np.linalg.norm(t_iip1_imu) if t_iip1_imu is not None else 1.0
+        t = t * imu_scale
 
     # ---- 5. Триангуляция новых точек в системе cam_left ----
     if len(pts_i_new) > 0:

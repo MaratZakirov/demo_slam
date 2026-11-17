@@ -3,7 +3,7 @@ import numpy as np
 from utils import *
 from debug import *
 import matplotlib.pyplot as plt
-from pair import process_stereo_pair_i
+from pair import process_stereo_pair
 from track import TrackManager
 from ba import bundle_adjust
 from pair import process_dense_pair
@@ -29,10 +29,10 @@ if __name__ == '__main__':
     t_0toi = np.zeros((3, 1))
 
     for i in range(len(frames) - 1):
-        R_i, t_i = process_stereo_pair_i(
+        R_i, t_i = process_stereo_pair(
             frames[i], frames[i+1], tm,
             world_pose=(R_0toi.T, -R_0toi.T @ t_0toi), # R_ito0 t_it0
-            cam_i=i, cam_ip1=i + 1, verbose=0)
+            cam_i=i, cam_j=i + 1, verbose=0)
 
         # instantly obtaining camera pose in camera 0 system
         cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])

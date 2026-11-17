@@ -2,7 +2,7 @@ from utils import *
 from debug import *
 from imu import *
 import matplotlib.pyplot as plt
-from pair import process_stereo_pair_i
+from pair import process_stereo_pair
 from track import TrackManager
 from ba import bundle_adjust
 from pair import process_dense_pair
@@ -37,7 +37,7 @@ if __name__ == '__main__':
         for i, frame in enumerate(frames):
             plt.figure()
             plt.imshow(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            plt.title(f'Кадр {i + 1} из {len(frames)}')
+            plt.title(f'Кадр {i} из {len(frames)}')
             plt.show()
 
     # Begin pairwise loop
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     v_0_imu = np.zeros(3) # fair assumption
 
     tm = TrackManager()
-    cam_poses = []    # [R_i, t_i] — позы cam_i → cam_{i+1}
+    cam_poses = []    # [R_ito0, t_ito0] — позы cam_i → cam_0
 
     # Накопитель: cam_left → world (frame 0)
     R_0toi = np.eye(3)
@@ -54,8 +54,9 @@ if __name__ == '__main__':
     n = np.array([0.0, 0.0, 1.0])
 
     for i in range(len(frames) - 1):
-        R_delta_imu, t_delta_imu, v_delta_imu = imu.preintegrate(
-            imu.t[i], imu.t[i + 1], R_0_imu, v_0_imu)
+        # consider next frame
+        j = i + 1
+        R_delta_imu, t_delta_imu, v_delta_imu = imu.preintegrate(imu.t[i], imu.t[j], R_0_imu, v_0_imu)
 
         R_old = R_0_imu.copy()
         R_0_imu = R_0_imu @ R_delta_imu
@@ -75,17 +76,15 @@ if __name__ == '__main__':
         else:
             d_bar = None
 
-        H_iip1 = imu.build_H(R_ij_imu, t_ij_imu, K, n, d_bar)
+        H_ij = imu.build_H(R_ij_imu, t_ij_imu, K, n, d_bar)
 
-        R_i, t_i = process_stereo_pair_i(
-            frames[i], frames[i + 1], tm,
-            world_pose=(R_0toi.T, -R_0toi.T @ t_0toi),
-            K=K,
-            cam_i=i, cam_ip1=i + 1, H_iip1=H_iip1, t_iip1_imu=t_ij_imu, verbose=0)
+        R_ij, t_ij = process_stereo_pair(
+            frames[i], frames[j], tm, world_pose=(R_0toi.T, -R_0toi.T @ t_0toi),
+            K=K, cam_i=i, cam_j=j, H_ij=H_ij, t_ij_imu=t_ij_imu, verbose=0)
 
         cam_poses.append([R_0toi.T, -R_0toi.T @ t_0toi])
-        R_0toi = R_i @ R_0toi
-        t_0toi = R_i @ t_0toi + t_i
+        R_0toi = R_ij @ R_0toi
+        t_0toi = R_ij @ t_0toi + t_ij
 
         print(f"[iter {i}] {tm.stats(i)}  d_bar={d_bar}")
 
@@ -96,4 +95,3 @@ if __name__ == '__main__':
 
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='pixel')
     visualize_slam_scene(tm, cam_poses, K=K, color_mode='camera')
-

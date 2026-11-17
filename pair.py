@@ -5,10 +5,10 @@ from debug import *
 import matplotlib.pyplot as plt
 
 # Second version w/o HitNet
-# process frames i -> i+1 where also i-th is Left and i+1 is Right
+# process frames i -> j where also i-th is Left and j is Right
 # regardless of their real motion
 # HitNet and dense stereo map will be applied in the next stage
-def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=None, H_iip1=None, t_iip1_imu=None, verbose=False):
+def process_stereo_pair(frame_i, frame_j, tm, cam_i, cam_j, world_pose, K=None, H_ij=None, t_ij_imu=None, verbose=False):
     # Пара (frame_i, frame_ip1) == (cam_i, cam_ip1).
     # Всё состояние треков живёт в `tm`. Пара его обновляет.
     #
@@ -23,26 +23,26 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
     active_ids, pts_i_inherited, X_i_inhereted = tm.active_on(cam_i)
 
     # ---- LK: тянем их на frame_right ----
-    pts_i_new, pts_ip1_new, pts_ip1_inherited, mask_prev = \
-        get_matches_using_optical_flow(frame_i, frame_ip1,
+    pts_i_new, pts_j_new, pts_j_inherited, mask_prev = \
+        get_matches_using_optical_flow(frame_i, frame_j,
                                        pts_i_inherited=pts_i_inherited,
-                                       H=H_iip1)
+                                       H=H_ij)
 
     active_ids = active_ids[mask_prev]
     pts_i_inherited = pts_i_inherited[mask_prev]
-    pts_ip1_inherited = pts_ip1_inherited[mask_prev]
+    pts_j_inherited = pts_j_inherited[mask_prev]
     X_i_inhereted = X_i_inhereted[mask_prev]
 
     # ---- Essential + RANSAC по всем (новым + унаследованным) ----
-    E, mask = cv2.findEssentialMat(
+    E_ij, mask = cv2.findEssentialMat(
         np.concatenate([pts_i_new, pts_i_inherited], axis=0),
-        np.concatenate([pts_ip1_new, pts_ip1_inherited], axis=0),
+        np.concatenate([pts_j_new, pts_j_inherited], axis=0),
         cameraMatrix=K, method=cv2.RANSAC, prob=0.999, threshold=0.5)
 
-    _, R, t, mask_pose = cv2.recoverPose(
-        E,
+    _, R_ij, t_ij, mask_pose = cv2.recoverPose(
+        E_ij,
         np.concatenate([pts_i_new, pts_i_inherited], axis=0),
-        np.concatenate([pts_ip1_new, pts_ip1_inherited], axis=0),
+        np.concatenate([pts_j_new, pts_j_inherited], axis=0),
         cameraMatrix=K, mask=mask)
 
     N = len(pts_i_new)
@@ -50,13 +50,13 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
 
     # Новые точки
     pts_i_new = pts_i_new[:N][valid_mask[:N]]
-    pts_ip1_new = pts_ip1_new[:N][valid_mask[:N]]
+    pts_j_new = pts_j_new[:N][valid_mask[:N]]
 
     # Унаследованные, дожившие до конца
     surv = valid_mask[N:]
     alive_ids = active_ids[surv]
     alive_pts_i_inherited = pts_i_inherited[surv]
-    alive_pts_ip1_inherited = pts_ip1_inherited[surv]
+    alive_pts_ip1_inherited = pts_j_inherited[surv]
     alive_X_i_inherited = X_i_inhereted[surv] # 3D inherited from previous cameras which are already in world (camera 0) system
 
     # ---- Scale correction ----
@@ -72,12 +72,12 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
 
         X_4d = cv2.triangulatePoints(
             K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
-            K @ np.hstack([R, t.reshape(3, 1)]),
+            K @ np.hstack([R_ij, t_ij.reshape(3, 1)]),
             alive_pts_i_inherited.T, alive_pts_ip1_inherited.T)
         X_i_inherited_cam_i = (X_4d[:3] / X_4d[3]).T
         z_inherited_cam_i = np.median(np.abs(X_i_inherited_cam_i[:, 2]))
         scale = z_inherited_world / z_inherited_cam_i
-        t = t * scale
+        t_ij = t_ij * scale
 
         median_shift = np.median(np.linalg.norm(X_i_inherited_cam_i * scale - X_i_inherited_local_meters, axis=1))
 
@@ -85,22 +85,22 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
             print(f"[pair {cam_i}] scale={scale:.4f} z_world={z_inherited_world:.3f} z_curr={z_inherited_cam_i:.3f} median_shift={median_shift:.3f}")
     else:
         # Take scale at first step visual features are useless ath this point
-        imu_scale = np.linalg.norm(t_iip1_imu) if t_iip1_imu is not None else 1.0
-        t = t * imu_scale
+        imu_scale = np.linalg.norm(t_ij_imu) if t_ij_imu is not None else 1.0
+        t_ij = t_ij * imu_scale
 
     # ---- 5. Триангуляция новых точек в системе cam_left ----
     if len(pts_i_new) > 0:
         X_4d = cv2.triangulatePoints(
             K @ np.hstack([np.eye(3), np.zeros((3, 1))]),
-            K @ np.hstack([R, t.reshape(3, 1)]),
-            pts_i_new.T, pts_ip1_new.T)
+            K @ np.hstack([R_ij, t_ij.reshape(3, 1)]),
+            pts_i_new.T, pts_j_new.T)
         X_i_cam_i = (X_4d[:3] / X_4d[3]).T
     else:
         X_i_cam_i = np.zeros((0, 3))
 
     # ---- TrackManager ----
     # Продлеваем выживших на cam_right
-    tm.extend(alive_ids, cam_ip1, alive_pts_ip1_inherited)
+    tm.extend(alive_ids, cam_j, alive_pts_ip1_inherited)
 
     colors = None
     if len(pts_i_new) > 0:
@@ -112,7 +112,7 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
 
     # Рождаем новых на cam_left, сразу продлеваем на cam_right
     new_ids = tm.birth(cam_i, pts_i_new, colors=colors)
-    tm.extend(new_ids, cam_ip1, pts_ip1_new)
+    tm.extend(new_ids, cam_j, pts_j_new)
 
     # Записываем 3D новых (переводим cam_left → world)
     if len(new_ids) > 0:
@@ -122,10 +122,10 @@ def process_stereo_pair_i(frame_i, frame_ip1, tm, cam_i, cam_ip1, world_pose, K=
 
     # ---- Debug ----
     if verbose:
-        plot_flow_vectors(frame_i, pts_i_new, pts_ip1_new, max_arrows=700)
-        plot_matches(frame_i, frame_ip1, pts_i_new, pts_ip1_new)
+        plot_flow_vectors(frame_i, pts_i_new, pts_j_new, max_arrows=700)
+        plot_matches(frame_i, frame_j, pts_i_new, pts_j_new)
 
-    return R, t
+    return R_ij, t_ij
 
 def process_dense_pair(frame_l, frame_r, pose_l, pose_r, K,
                        pair_id=(0, 0), verbose=False):

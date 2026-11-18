@@ -41,13 +41,13 @@ if __name__ == '__main__':
             plt.show()
 
     # Begin pairwise loop
-    R_0_imu = imu.init_orientation_from_gravity()
+    R_ito0_imu = imu.init_orientation_from_gravity()
     v_0_imu = np.zeros(3) # fair assumption
 
     tm = TrackManager()
     cam_poses = []    # [R_ito0, t_ito0] — позы cam_i → cam_0
 
-    # Накопитель: cam_left → world (frame 0)
+    # Накопитель: world (frame 0) → cam_i
     R_0toi = np.eye(3)
     t_0toi = np.zeros((3, 1))
 
@@ -56,22 +56,19 @@ if __name__ == '__main__':
     for i in range(len(frames) - 1):
         # consider next frame
         j = i + 1
-        R_delta_imu, t_delta_imu, v_delta_imu = imu.preintegrate(imu.t[i], imu.t[j], R_0_imu, v_0_imu)
 
-        R_old = R_0_imu.copy()
-        R_0_imu = R_0_imu @ R_delta_imu
-        v_0_imu = v_0_imu + R_old @ v_delta_imu
+        R_ji_imu, t_ji_imu, v_ji_imu = imu.preintegrate(imu.t[i], imu.t[j], R_ito0_imu, v_0_imu)
+        v_0_imu    = v_0_imu + R_ito0_imu @ v_ji_imu   # R ещё старая — dv в осях body(i)
+        R_ito0_imu = R_ito0_imu @ R_ji_imu
 
-        # pose cam_i -> cam_ip1 для H: X_ip1 = R_ij @ X_i + t_ij
-        R_ij_imu = R_delta_imu.T
-        t_ij_imu = -R_delta_imu.T @ t_delta_imu
+        # pose cam_i -> cam_j для H: X_j = R_ij @ X_i + t_ij
+        R_ij_imu = R_ji_imu.T
+        t_ij_imu = -R_ji_imu.T @ t_ji_imu
 
         # средняя глубина в cam_i
         if len(tm.X) >= 20:
             X_w = np.array(list(tm.X.values()))
-            R_ito0 = R_0toi.T
-            t_ito0 = -R_0toi.T @ t_0toi
-            X_cam_i = (R_ito0.T @ (X_w - t_ito0.ravel()).T).T
+            X_cam_i = X_w @ R_0toi.T + t_0toi.ravel()
             d_bar = float(np.median(X_cam_i[:, 2]))
         else:
             d_bar = None

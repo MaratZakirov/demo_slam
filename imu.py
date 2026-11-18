@@ -56,11 +56,11 @@ class IMUData:
     def preintegrate(self, t0, t1, R0, v0, bg=None, ba=None, g_world=None):
         # Integration (Euler may be switched to RK4) IMU data between t0 and t1
         # Возвращает относительное движение IMU-фрейма между t0 и t1:
-        #    dR : X_body(t0) -> X_body(t1)   (3,3) SO(3)
+        #    dR : X_body(t1) -> X_body(t0)   (3,3) SO(3)
         #    dt : сдвиг в системе body(t0)    (3,)
         #    dv : приращение скорости в body(t0) (3,)   (опционально)
         # Интегрирование — в world-frame с явной гравитацией, потом проекция в body(t0).
-        # Returns SE_2(3) element (5x5 matrix)
+        # May return SE_2(3) element (5x5 matrix)
         if bg is None:
             bg = np.zeros(3)
         if ba is None:

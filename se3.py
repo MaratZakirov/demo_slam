@@ -13,6 +13,26 @@ def _hat(w):
     x, y, z = np.asarray(w, dtype=float).reshape(3)
     return np.array([[0., -z, y], [z, 0., -x], [-y, x, 0.]])
 
+def so3_left_jacobian(phi):
+    """V(φ): в exp_SE3 трансляция t = V·ρ. Ряд при малых углах."""
+    phi = np.asarray(phi, dtype=float).reshape(3)
+    th = np.linalg.norm(phi)
+    W = _hat(phi)
+    if th < 1e-6:
+        B, C = .5 - th**2 / 24., 1. / 6. - th**2 / 120.
+    else:
+        B = (1. - np.cos(th)) / th**2
+        C = (th - np.sin(th)) / th**3
+    return np.eye(3) + B * W + C * (W @ W)
+
+
+def so3_left_jacobian_inv(phi):
+    phi = np.asarray(phi, dtype=float).reshape(3)
+    th = np.linalg.norm(phi)
+    W = _hat(phi)
+    c = 1. / 12. + th**2 / 720. if th < 1e-4 else \
+        (1. - .5 * th / np.tan(.5 * th)) / th**2
+    return np.eye(3) - .5 * W + c * (W @ W)
 
 class SE3:
     __slots__ = ("_T",)
@@ -63,26 +83,13 @@ class SE3:
     @classmethod
     def exp(cls, xi):
         xi = np.asarray(xi, dtype=float).reshape(6)
-        rho, phi = xi[:3], xi[3:]
-        th = np.linalg.norm(phi)
-        W = _hat(phi)
-        if th < 1e-6:
-            A, B, C = 1. - th**2 / 6., .5 - th**2 / 24., 1. / 6. - th**2 / 120.
-        else:
-            A = np.sin(th) / th
-            B = (1. - np.cos(th)) / th**2
-            C = (th - np.sin(th)) / th**3
-        W2 = W @ W
-        return cls(np.eye(3) + A * W + B * W2, (np.eye(3) + B * W + C * W2) @ rho)
+        phi = xi[3:]
+        return cls(Rotation.from_rotvec(phi).as_matrix(),
+                   so3_left_jacobian(phi) @ xi[:3])
 
     def log(self):
         phi = Rotation.from_matrix(self.R).as_rotvec()
-        th = np.linalg.norm(phi)
-        W = _hat(phi)
-        c = 1. / 12. + th**2 / 720. if th < 1e-4 else \
-            (1. - .5 * th / np.tan(.5 * th)) / th**2
-        rho = (np.eye(3) - .5 * W + c * (W @ W)) @ self.t
-        return np.concatenate([rho, phi])
+        return np.concatenate([so3_left_jacobian_inv(phi) @ self.t, phi])
 
     def Adjoint(self):
         """Ad(T) @ xi == (T @ exp(xi) @ T.inverse()).log()"""

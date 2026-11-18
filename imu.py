@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.spatial.transform import Rotation
+from se23 import SE23, imu_propagate
 
 
 class IMUData:
@@ -12,6 +13,25 @@ class IMUData:
         self.gyr = None     # (M, 3) rad/s
         self.mag = None     # (K, 3) uT
         self.g_world = np.array([0.0, 0.0, -9.81])
+
+        # Плотности шума (σ/√Hz). ЗАГЛУШКИ: заменить на паспорт/Allan variance.
+        self.sigma_a  = 2.0e-3   # acc,  m/s²/√Hz
+        self.sigma_g  = 1.7e-4   # gyr,  rad/s/√Hz
+        self.sigma_ba = 3.0e-3   # acc bias random walk
+        self.sigma_bg = 1.9e-5   # gyr bias random walk
+
+    @property
+    def sigmas(self):
+        return np.array([self.sigma_a, self.sigma_g, self.sigma_ba, self.sigma_bg])
+
+    def segment(self, t0, t1):
+        """Общая сетка времён + интерполированные acc/gyr на ней. Без состояния."""
+        ts_acc, a_seg = self._slice(self.acc_t, self.acc, t0, t1)
+        ts_gyr, w_seg = self._slice(self.gyr_t, self.gyr, t0, t1)
+        ts = np.unique(np.concatenate([ts_acc, ts_gyr]))
+        a_grid = np.stack([np.interp(ts, ts_acc, a_seg[:, i]) for i in range(3)], axis=1)
+        w_grid = np.stack([np.interp(ts, ts_gyr, w_seg[:, i]) for i in range(3)], axis=1)
+        return ts, a_grid, w_grid
 
     def load(self, t, acc, gyr, mag):
         self.t = np.loadtxt(t).ravel() * 1e-9
@@ -54,54 +74,26 @@ class IMUData:
         return ts_out, v_out
 
     def preintegrate(self, t0, t1, R0, v0, bg=None, ba=None, g_world=None):
-        # Integration (Euler may be switched to RK4) IMU data between t0 and t1
-        # Возвращает относительное движение IMU-фрейма между t0 и t1:
-        #    dR : X_body(t1) -> X_body(t0)   (3,3) SO(3)
-        #    dt : сдвиг в системе body(t0)    (3,)
-        #    dv : приращение скорости в body(t0) (3,)   (опционально)
-        # Интегрирование — в world-frame с явной гравитацией, потом проекция в body(t0).
-        # May return SE_2(3) element (5x5 matrix)
-        if bg is None:
-            bg = np.zeros(3)
-        if ba is None:
-            ba = np.zeros(3)
-        if g_world is None:
-            g_world = self.g_world
+        """LEGACY-обёртка над той же пропагацией SE_2(3), что использует IEKF.
 
-        ts_acc, a_seg = self._slice(self.acc_t, self.acc, t0, t1)
-        ts_gyr, w_seg = self._slice(self.gyr_t, self.gyr, t0, t1)
+        Возвращает позу j в i и приращение скорости, всё в осях body(t0):
+            dR: X_body(t1) -> X_body(t0)   (3,3) SO(3)
+            dt: центр body(t1) в осях body(t0)  (3,)
+            dv: (v(t1) - v(t0)) в осях body(t0) (3,)
+        """
+        bg = np.zeros(3) if bg is None else np.asarray(bg, float)
+        ba = np.zeros(3) if ba is None else np.asarray(ba, float)
+        g_world = self.g_world if g_world is None else g_world
 
-        # общая сетка: берём объединение времён
-        ts = np.unique(np.concatenate([ts_acc, ts_gyr]))
-        # интерполируем оба сигнала на эту сетку
-        a_grid = np.stack([np.interp(ts, ts_acc, a_seg[:, i]) for i in range(3)], axis=1)
-        w_grid = np.stack([np.interp(ts, ts_gyr, w_seg[:, i]) for i in range(3)], axis=1)
-
-        R = R0.copy()
-        v = v0.copy()
-        p = np.zeros(3)
-
+        ts, a_grid, w_grid = self.segment(t0, t1)
+        X = SE23(R0, v0, np.zeros(3))
         for k in range(len(ts) - 1):
             dt = float(ts[k + 1] - ts[k])
             if dt <= 0:
                 continue
-            a_k = a_grid[k] - ba          # ускорение в body
-            w_k = w_grid[k] - bg          # угловая скорость в body
+            X = imu_propagate(X, w_grid[k] - bg, a_grid[k] - ba, dt, g_world)
 
-            # Euler integration for accelerometer
-            a_world = R @ a_k + g_world
-            p = p + v * dt + 0.5 * a_world * dt * dt
-            v = v + a_world * dt
-
-            # Rotation correction via matrix exponent from so(3) -> SO(3)
-            R = R @ Rotation.from_rotvec(w_k * dt).as_matrix()
-
-        # проекция в body(t0)
-        dR = R0.T @ R
-        dt_delta = R0.T @ p
-        dv = R0.T @ (v - v0)
-
-        return dR, dt_delta, dv
+        return R0.T @ X.R, R0.T @ X.p, R0.T @ (X.v - np.asarray(v0, float))
 
     def build_H(self, R_delta, t_delta, K, n, d_bar):
         # Homography for LK-seed
